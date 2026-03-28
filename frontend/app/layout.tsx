@@ -17,6 +17,10 @@ const geistMono = localFont({
 export const metadata: Metadata = {
   title: "HYDRA — Parallel AI Multisig Wallet",
   description: "Three AI agents protect every transaction on Monad.",
+  icons: {
+    icon: "/hydra.png",
+    apple: "/hydra.png",
+  },
 };
 
 export default function RootLayout({
