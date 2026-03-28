@@ -21,7 +21,8 @@ const ANALYZING_STEPS = [
   'Finalizing analysis...',
 ];
 
-export function AgentCard({ name, icon, status, reason, riskScore, color: _color }: AgentCardProps) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function AgentCard({ name, icon, status, reason, riskScore, color }: AgentCardProps) {
   const [analyzeStep, setAnalyzeStep] = useState(0);
   const [revealed, setRevealed] = useState(false);
 
