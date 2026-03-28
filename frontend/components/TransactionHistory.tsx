@@ -17,7 +17,7 @@ function TxRow({ txId }: TxRowProps) {
   });
 
   if (!data) return null;
-  const [to, value, executed, rejected, approvals, rejections] = data as [string, bigint, boolean, boolean, bigint, bigint];
+  const [to, value, executed, rejected, approvals] = data as [string, bigint, boolean, boolean, bigint, bigint];
 
   const status = executed ? 'executed' : rejected ? 'rejected' : 'pending';
 

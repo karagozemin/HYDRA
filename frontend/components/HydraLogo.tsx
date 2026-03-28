@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 export function HydraLogo({ size = 40 }: { size?: number }) {
   return (
     <img

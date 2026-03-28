@@ -22,6 +22,7 @@ export function TransactionForm({ onSubmitted, onConfirmed, onError }: Transacti
     if (isSuccess) {
       onConfirmed();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isSuccess]);
 
   // Show contract/wallet errors and reset phase

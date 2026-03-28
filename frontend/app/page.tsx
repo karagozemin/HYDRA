@@ -434,7 +434,7 @@ export default function Home() {
               </div>
             )}
             {phase === 'analyzing' && activeTxId !== null && (
-              <AgentPanel txId={activeTxId} isSubmitting={false} />
+              <AgentPanel txId={activeTxId} />
             )}
           </div>
         </div>
