@@ -17,10 +17,14 @@ interface AgentResult {
   riskScore?: number;
 }
 
-function useAgentVote(txId: bigint | null, address: `0x${string}`): AgentResult {
+function useAgentVote(txId: bigint | null, address: `0x${string}`, txResolved: boolean): AgentResult {
   const { data } = useGetVote(txId, address);
   if (!txId) return { status: 'idle' };
-  if (!data || !data[0]) return { status: 'analyzing' };
+  if (!data || !data[0]) {
+    // If tx is already resolved (rejected/executed) but this agent didn't vote, it was skipped
+    if (txResolved) return { status: 'rejected', reason: 'Vote skipped — transaction already resolved.', riskScore: 0 };
+    return { status: 'analyzing' };
+  }
   return {
     status: data[1] ? 'approved' : 'rejected',
     reason: data[2] as string,
@@ -29,11 +33,6 @@ function useAgentVote(txId: bigint | null, address: `0x${string}`): AgentResult 
 }
 
 export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
-  const security  = useAgentVote(txId, AGENT1_ADDRESS);
-  const risk      = useAgentVote(txId, AGENT2_ADDRESS);
-  const portfolio = useAgentVote(txId, AGENT3_ADDRESS);
-
-  const { data: canExec } = useCanExecute(txId);
   const { data: txData } = useReadContract({
     address: CONTRACT_ADDRESS,
     abi: HYDRA_ABI,
@@ -46,6 +45,11 @@ export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
 
   const isExecuted = txData ? (txData as any)[2] : false;
   const isRejected = txData ? (txData as any)[3] : false;
+  const txResolved = isExecuted || isRejected;
+
+  const security  = useAgentVote(txId, AGENT1_ADDRESS, txResolved);
+  const risk      = useAgentVote(txId, AGENT2_ADDRESS, txResolved);
+  const portfolio = useAgentVote(txId, AGENT3_ADDRESS, txResolved);
 
   // Staggered reveal
   const [revealCount, setRevealCount] = useState(0);

@@ -4,26 +4,31 @@ import { analyzeTransaction as securityAnalyze } from './agents/securityAgent.js
 import { analyzeTransaction as riskAnalyze } from './agents/riskAgent.js';
 import { analyzeTransaction as portfolioAnalyze } from './agents/portfolioAgent.js';
 
-const AGENT_LABELS = {
-  [securityWallet.account.address.toLowerCase()]: 'Security',
-  [riskWallet.account.address.toLowerCase()]: 'Risk',
-  [portfolioWallet.account.address.toLowerCase()]: 'Portfolio',
-};
-
 async function submitVote(txId, result, wallet, label) {
   const riskScore = BigInt(Math.min(100, Math.max(0, Math.round(result.risk_score ?? 50))));
   const reason = String(result.reason ?? 'No reason provided').slice(0, 200);
 
-  const hash = await wallet.client.writeContract({
-    address: HYDRA_GUARD_ADDRESS,
-    abi: HYDRA_GUARD_ABI,
-    functionName: 'agentVote',
-    args: [BigInt(txId.toString()), result.approve === true, reason, riskScore],
-    account: wallet.account,
-  });
+  try {
+    const hash = await wallet.client.writeContract({
+      address: HYDRA_GUARD_ADDRESS,
+      abi: HYDRA_GUARD_ABI,
+      functionName: 'agentVote',
+      args: [BigInt(txId.toString()), result.approve === true, reason, riskScore],
+      account: wallet.account,
+    });
 
-  console.log(`[${label}] ${result.approve ? '✅ APPROVED' : '❌ REJECTED'} | risk=${result.risk_score} | tx: ${hash}`);
-  return hash;
+    const receipt = await publicClient.waitForTransactionReceipt({ hash, timeout: 15000 });
+    if (receipt.status === 'reverted') {
+      console.log(`[${label}] ⏭️  Vote reverted (tx already resolved) | risk=${result.risk_score}`);
+      return { hash, landed: false, resolved: true };
+    }
+
+    console.log(`[${label}] ${result.approve ? '✅ APPROVED' : '❌ REJECTED'} | risk=${result.risk_score} | block: ${receipt.blockNumber}`);
+    return { hash, landed: true, resolved: false };
+  } catch (err) {
+    console.log(`[${label}] ⏭️  Skipped (${err.shortMessage || err.message}) | risk=${result.risk_score}`);
+    return { hash: null, landed: false, resolved: true };
+  }
 }
 
 export function startOrchestrator() {
@@ -69,21 +74,25 @@ export function startOrchestrator() {
 
         console.log(`   Analysis complete in ${Date.now() - startTime}ms`);
 
-        // ─── STEP 2: Submit 3 votes IN PARALLEL → same Monad block ──────────
-        console.log('⚡ Submitting parallel votes to Monad...');
+        // ─── STEP 2: Submit votes sequentially (shared approvalCount/rejectionCount slot) ─
+        console.log('⚡ Submitting votes to Monad (sequential)...');
         const voteStart = Date.now();
 
-        const [h1, h2, h3] = await Promise.all([
-          submitVote(txId, securityResult, securityWallet, 'Security'),
-          submitVote(txId, riskResult, riskWallet, 'Risk'),
-          submitVote(txId, portfolioResult, portfolioWallet, 'Portfolio'),
-        ]);
+        const allVotes = [
+          { result: securityResult, wallet: securityWallet, label: 'Security' },
+          { result: riskResult, wallet: riskWallet, label: 'Risk' },
+          { result: portfolioResult, wallet: portfolioWallet, label: 'Portfolio' },
+        ];
 
-        console.log(`   Votes submitted in ${Date.now() - voteStart}ms`);
-        console.log('\n   Vote tx hashes (check these are same block on Monad Explorer!):');
-        console.log(`   Security:  ${h1}`);
-        console.log(`   Risk:      ${h2}`);
-        console.log(`   Portfolio: ${h3}`);
+        for (const { result: res, wallet, label } of allVotes) {
+          const r = await submitVote(txId, res, wallet, label);
+          if (r.resolved) {
+            console.log(`   ⏭️  Remaining votes skipped (tx already resolved)`);
+            break;
+          }
+        }
+
+        console.log(`   Done in ${Date.now() - voteStart}ms`);
 
         // ─── Tally ───────────────────────────────────────────────────────────
         const approvals = [securityResult, riskResult, portfolioResult].filter(r => r.approve).length;
