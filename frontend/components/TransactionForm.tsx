@@ -7,14 +7,15 @@ import { isAddress } from 'viem';
 interface TransactionFormProps {
   onSubmitted: () => void;
   onConfirmed: () => void;
+  onError: () => void;
 }
 
-export function TransactionForm({ onSubmitted, onConfirmed }: TransactionFormProps) {
+export function TransactionForm({ onSubmitted, onConfirmed, onError }: TransactionFormProps) {
   const [to, setTo]       = useState('');
   const [value, setValue] = useState('');
   const [error, setError] = useState('');
 
-  const { submitTransaction, isPending, isConfirming, isSuccess, submitHash, reset } = useHydraContract();
+  const { submitTransaction, isPending, isConfirming, isSuccess, submitHash, error: contractError, reset } = useHydraContract();
 
   // When tx is confirmed on-chain, notify parent
   useEffect(() => {
@@ -23,9 +24,23 @@ export function TransactionForm({ onSubmitted, onConfirmed }: TransactionFormPro
     }
   }, [isSuccess]);
 
+  // Show contract/wallet errors and reset phase
+  useEffect(() => {
+    if (contractError) {
+      const msg = contractError.message?.includes('User rejected')
+        ? 'Transaction rejected by wallet.'
+        : contractError.message?.includes('insufficient funds')
+        ? 'Insufficient funds in contract.'
+        : 'Transaction failed. Please try again.';
+      setError(msg);
+      onError();
+    }
+  }, [contractError, onError]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    reset();
 
     if (!isAddress(to)) { setError('Invalid address'); return; }
     if (!value || isNaN(Number(value)) || Number(value) <= 0) { setError('Invalid amount'); return; }
