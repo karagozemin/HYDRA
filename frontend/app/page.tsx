@@ -1,101 +1,90 @@
-import Image from "next/image";
+'use client';
+
+import { useState } from 'react';
+import { useAccount } from 'wagmi';
+import { ConnectWallet } from '../components/ConnectWallet';
+import { TransactionForm } from '../components/TransactionForm';
+import { AgentPanel } from '../components/AgentPanel';
+import { TransactionHistory } from '../components/TransactionHistory';
+import { HydraLogo } from '../components/HydraLogo';
+import { WrongNetworkBanner } from '../components/WrongNetworkBanner';
+import { useTxCount } from '../hooks/useHydraContract';
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="https://nextjs.org/icons/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const { isConnected } = useAccount();
+  const [activeTxId, setActiveTxId] = useState<bigint | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const { data: txCount } = useTxCount();
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="https://nextjs.org/icons/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  const handleSubmitted = (txId: bigint | null) => {
+    setActiveTxId(txId);
+    setAnalyzing(true);
+  };
+
+  return (
+    <main className="min-h-screen bg-black text-white">
+      <WrongNetworkBanner />
+      {/* Header */}
+      <header className="border-b border-gray-900 px-6 py-4 flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <HydraLogo />
+          <div>
+            <h1 className="text-lg font-bold tracking-tight">HYDRA</h1>
+            <p className="text-xs text-gray-600 font-mono">Parallel AI Multisig · Monad</p>
+          </div>
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="https://nextjs.org/icons/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
-    </div>
+        <ConnectWallet />
+      </header>
+
+      {!isConnected ? (
+        /* Hero / Not connected */
+        <div className="flex flex-col items-center justify-center min-h-[80vh] gap-6 px-4 text-center">
+          <div className="text-6xl">🐉</div>
+          <h2 className="text-3xl font-bold">Cut one head.</h2>
+          <p className="text-xl text-green-400 font-bold">Three more protect your wallet.</p>
+          <p className="text-gray-500 max-w-md text-sm">
+            Three independent AI agents analyze every transaction in parallel before it executes.
+            Security. Risk. Portfolio. All in one block.
+          </p>
+          <ConnectWallet />
+        </div>
+      ) : (
+        /* Dashboard */
+        <div className="max-w-5xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
+
+          {/* Left: Submit + History */}
+          <div className="space-y-6">
+            <section className="bg-gray-950 border border-gray-900 rounded-2xl p-6">
+              <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-5">
+                New Transaction
+              </h2>
+              <TransactionForm onSubmitted={handleSubmitted} />
+            </section>
+
+            <section className="bg-gray-950 border border-gray-900 rounded-2xl p-6">
+              <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-4">
+                History
+              </h2>
+              <TransactionHistory txCount={txCount ?? 0n} />
+            </section>
+          </div>
+
+          {/* Right: Agent Panel */}
+          <div className="bg-gray-950 border border-gray-900 rounded-2xl p-6 h-fit">
+            {!analyzing ? (
+              <div className="flex flex-col items-center justify-center py-12 gap-4 text-center">
+                <div className="text-4xl opacity-30">🛡️📊💼</div>
+                <p className="text-gray-700 text-sm font-mono">
+                  Submit a transaction to activate the AI guardians.
+                </p>
+              </div>
+            ) : (
+              <AgentPanel txId={activeTxId} isSubmitting={analyzing} />
+            )}
+          </div>
+
+        </div>
+      )}
+    </main>
   );
 }
