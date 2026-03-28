@@ -1,6 +1,6 @@
 'use client';
 
-import { useReadContract } from 'wagmi';
+import { useReadContract, useAccount } from 'wagmi';
 import { CONTRACT_ADDRESS, HYDRA_ABI } from '../lib/constants';
 
 interface TxRowProps {
@@ -51,6 +51,21 @@ interface TransactionHistoryProps {
 }
 
 export function TransactionHistory({ txCount }: TransactionHistoryProps) {
+  const { address } = useAccount();
+
+  // Read contract owner
+  const { data: owner } = useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: HYDRA_ABI,
+    functionName: 'owner',
+  });
+
+  const isOwner = address && owner && address.toLowerCase() === (owner as string).toLowerCase();
+
+  if (!isOwner) {
+    return <p className="text-xs text-gray-700 text-center py-4 font-mono">No transactions yet.</p>;
+  }
+
   const count = Number(txCount);
   const ids = Array.from({ length: Math.min(count, 10) }, (_, i) => BigInt(count - i)).filter(id => id >= 1n);
 
