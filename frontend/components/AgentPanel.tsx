@@ -41,7 +41,7 @@ export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
     query: { enabled: txId !== null, refetchInterval: 3000 },
   });
 
-  const { executeTransaction, isPending: execPending, isConfirming: execConfirming, isSuccess: execSuccess } = useHydraContract();
+  const { executeTransaction, isPending: execPending, isConfirming: execConfirming, isSuccess: execSuccess, submitHash: execHash } = useHydraContract();
 
   const isExecuted = txData ? (txData as any)[2] : false;
   const isRejected = txData ? (txData as any)[3] : false;
@@ -122,10 +122,20 @@ export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
 
       {/* Executed success */}
       {isExecuted && (
-        <div className="rounded-xl bg-green-900/30 border border-green-700 p-5 text-center animate-fade-in">
+        <div className="rounded-xl bg-green-900/30 border border-green-700 p-5 text-center animate-fade-in space-y-2">
           <div className="text-2xl mb-2">✅</div>
           <div className="text-green-400 font-bold text-sm">Transaction Executed</div>
-          <div className="text-gray-500 text-xs mt-1">Funds transferred successfully.</div>
+          <div className="text-gray-500 text-xs">Funds transferred successfully.</div>
+          {execHash && (
+            <a
+              href={`https://testnet.monadexplorer.com/tx/${execHash}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-block text-xs text-gray-600 hover:text-green-400 font-mono transition"
+            >
+              tx: {execHash.slice(0, 10)}...{execHash.slice(-8)} ↗
+            </a>
+          )}
         </div>
       )}
 
