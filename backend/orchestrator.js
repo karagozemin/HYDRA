@@ -4,6 +4,19 @@ import { analyzeTransaction as securityAnalyze } from './agents/securityAgent.js
 import { analyzeTransaction as riskAnalyze } from './agents/riskAgent.js';
 import { analyzeTransaction as portfolioAnalyze } from './agents/portfolioAgent.js';
 
+// In-memory activity log (last 100 entries)
+const activityLog = [];
+const MAX_LOG = 100;
+
+function logActivity(entry) {
+  activityLog.push({ ...entry, timestamp: Date.now() });
+  if (activityLog.length > MAX_LOG) activityLog.shift();
+}
+
+export function getActivity() {
+  return activityLog;
+}
+
 async function submitVote(txId, result, wallet, label) {
   const riskScore = BigInt(Math.min(100, Math.max(0, Math.round(result.risk_score ?? 50))));
   const reason = String(result.reason ?? 'No reason provided').slice(0, 200);
@@ -115,6 +128,21 @@ export function startOrchestrator() {
           console.log(`   ❌ HYDRA REJECTED — transaction blocked`);
         }
         console.log('');
+
+        // Log activity
+        logActivity({
+          txId: txId.toString(),
+          to,
+          value: valueMON,
+          approvals,
+          result: approvals >= 2 ? 'approved' : 'rejected',
+          analysisMs: Date.now() - startTime,
+          agents: [
+            { name: 'Security', approve: securityResult.approve, riskScore: securityResult.risk_score, reason: securityResult.reason },
+            { name: 'Risk', approve: riskResult.approve, riskScore: riskResult.risk_score, reason: riskResult.reason },
+            { name: 'Portfolio', approve: portfolioResult.approve, riskScore: portfolioResult.risk_score, reason: portfolioResult.reason },
+          ],
+        });
       }
     },
     onError: (err) => {
