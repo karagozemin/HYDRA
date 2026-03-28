@@ -84,10 +84,10 @@ export default function Home() {
               </div>
 
               <div className="animate-slide-up-d1 space-y-3">
-                <h2 className="text-5xl md:text-7xl lg:text-8xl font-extrabold tracking-tight leading-[1.05]">
+                <h2 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.1]">
                   Cut one head.
                 </h2>
-                <h2 className="text-5xl md:text-7xl lg:text-8xl font-extrabold tracking-tight leading-[1.05] bg-gradient-to-r from-green-400 via-emerald-300 to-green-500 bg-clip-text text-transparent animate-gradient-x">
+                <h2 className="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.1] bg-gradient-to-r from-green-400 via-emerald-300 to-green-500 bg-clip-text text-transparent animate-gradient-x">
                   Three more protect your wallet.
                 </h2>
               </div>
@@ -97,10 +97,6 @@ export default function Home() {
                 all voting in a single Monad block.{' '}
                 <span className="text-green-400 font-medium">2-of-3 consensus</span> before any funds move.
               </p>
-
-              <div className="animate-slide-up-d3 pt-2">
-                <ConnectWallet />
-              </div>
 
               {/* Scroll hint */}
               <div className="animate-slide-up-d3 pt-8">
@@ -137,7 +133,7 @@ export default function Home() {
                 <h3 className="text-3xl md:text-4xl font-bold text-white">
                   Parallel protection in one block
                 </h3>
-                <p className="text-gray-500 mt-3 max-w-lg mx-auto text-sm">
+                <p className="text-gray-500 mt-4 max-w-lg mx-auto text-base">
                   Unlike sequential multisigs, HYDRA agents vote simultaneously — enabled by Monad&apos;s parallel EVM.
                 </p>
               </div>
@@ -215,7 +211,7 @@ export default function Home() {
                 <h3 className="text-3xl md:text-4xl font-bold text-white">
                   Three layers of protection
                 </h3>
-                <p className="text-gray-500 mt-3 max-w-lg mx-auto text-sm">
+                <p className="text-gray-500 mt-4 max-w-lg mx-auto text-base">
                   Each agent specializes in a different dimension of transaction safety, powered by Llama 3.3 70B on GROQ.
                 </p>
               </div>
@@ -255,15 +251,15 @@ export default function Home() {
                 ].map(a => (
                   <div key={a.name} className={`group relative border border-gray-800/60 ${a.border} bg-gray-950/80 backdrop-blur-sm rounded-2xl overflow-hidden transition-all duration-500 hover:scale-[1.02] hover:-translate-y-1`}>
                     <div className={`absolute inset-0 bg-gradient-to-b ${a.gradient} opacity-0 group-hover:opacity-100 transition-opacity duration-700`} />
-                    <div className="relative p-6">
-                      <div className="text-4xl mb-5">{a.icon}</div>
-                      <h4 className="text-lg font-bold text-white mb-2">{a.name}</h4>
-                      <p className="text-sm text-gray-500 leading-relaxed mb-5">{a.desc}</p>
-                      <div className="space-y-2.5">
+                    <div className="relative p-8">
+                      <div className="text-5xl mb-5">{a.icon}</div>
+                      <h4 className="text-xl font-bold text-white mb-3">{a.name}</h4>
+                      <p className="text-base text-gray-400 leading-relaxed mb-6">{a.desc}</p>
+                      <div className="space-y-3">
                         {a.checks.map(c => (
-                          <div key={c} className="flex items-center gap-2.5">
-                            <div className={`w-1.5 h-1.5 rounded-full ${a.dotColor} opacity-60`} />
-                            <span className="text-xs text-gray-400">{c}</span>
+                          <div key={c} className="flex items-center gap-3">
+                            <div className={`w-2 h-2 rounded-full ${a.dotColor} opacity-60`} />
+                            <span className="text-sm text-gray-400">{c}</span>
                           </div>
                         ))}
                       </div>
@@ -279,16 +275,16 @@ export default function Home() {
             <div className="max-w-4xl mx-auto">
               <div className="text-center mb-16">
                 <p className="text-xs font-bold uppercase tracking-[0.3em] text-green-500/60 mb-3">Why HYDRA</p>
-                <h3 className="text-3xl md:text-4xl font-bold text-white">
+                <h3 className="text-3xl md:text-5xl font-bold text-white">
                   Traditional multisig is broken
                 </h3>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Old way */}
-                <div className="border border-gray-800/40 bg-gray-950/50 rounded-2xl p-6">
-                  <div className="text-xs font-bold uppercase tracking-wider text-gray-600 mb-5">Traditional Multisig</div>
-                  <div className="space-y-4">
+                <div className="border border-gray-800/40 bg-gray-950/50 rounded-2xl p-8">
+                  <div className="text-sm font-bold uppercase tracking-wider text-gray-600 mb-6">Traditional Multisig</div>
+                  <div className="space-y-5">
                     {[
                       'Human signers can be compromised',
                       'Sequential approval is slow',
@@ -296,17 +292,17 @@ export default function Home() {
                       'Single dimension of verification',
                     ].map(item => (
                       <div key={item} className="flex items-start gap-3">
-                        <span className="text-red-500/70 mt-0.5 text-sm">&#10005;</span>
-                        <span className="text-sm text-gray-500">{item}</span>
+                        <span className="text-red-500/70 mt-0.5 text-lg">&#10005;</span>
+                        <span className="text-lg text-gray-500">{item}</span>
                       </div>
                     ))}
                   </div>
                 </div>
 
                 {/* HYDRA way */}
-                <div className="border border-green-500/20 bg-green-500/[0.03] rounded-2xl p-6">
-                  <div className="text-xs font-bold uppercase tracking-wider text-green-500/70 mb-5">HYDRA Multisig</div>
-                  <div className="space-y-4">
+                <div className="border border-green-500/20 bg-green-500/[0.03] rounded-2xl p-8">
+                  <div className="text-sm font-bold uppercase tracking-wider text-green-500/70 mb-6">HYDRA Multisig</div>
+                  <div className="space-y-5">
                     {[
                       'AI agents can\'t be socially engineered',
                       'Parallel voting in one block',
@@ -314,8 +310,8 @@ export default function Home() {
                       'Three specialized perspectives',
                     ].map(item => (
                       <div key={item} className="flex items-start gap-3">
-                        <span className="text-green-500/80 mt-0.5 text-sm">&#10003;</span>
-                        <span className="text-sm text-gray-300">{item}</span>
+                        <span className="text-green-500/80 mt-0.5 text-lg">&#10003;</span>
+                        <span className="text-lg text-gray-300">{item}</span>
                       </div>
                     ))}
                   </div>
@@ -331,16 +327,16 @@ export default function Home() {
                 <p className="text-xs font-bold uppercase tracking-[0.3em] text-green-500/60 mb-3">Built With</p>
               </div>
 
-              <div className="grid grid-cols-3 gap-8">
+              <div className="grid grid-cols-3 gap-10">
                 {[
                   { name: 'Monad', desc: 'Parallel EVM L1 blockchain', detail: '10,000 TPS' },
                   { name: 'GROQ', desc: 'Ultra-fast LLM inference', detail: 'Llama 3.3 70B' },
                   { name: 'Solidity', desc: 'On-chain multisig contract', detail: '2-of-3 voting' },
                 ].map(t => (
                   <div key={t.name} className="text-center group">
-                    <div className="text-xl font-bold text-white group-hover:text-green-400 transition-colors">{t.name}</div>
-                    <div className="text-xs text-gray-500 mt-1">{t.desc}</div>
-                    <div className="text-[10px] text-gray-700 font-mono mt-2">{t.detail}</div>
+                    <div className="text-3xl font-bold text-white group-hover:text-green-400 transition-colors">{t.name}</div>
+                    <div className="text-base text-gray-500 mt-2">{t.desc}</div>
+                    <div className="text-sm text-gray-700 font-mono mt-2">{t.detail}</div>
                   </div>
                 ))}
               </div>
@@ -349,19 +345,44 @@ export default function Home() {
 
           {/* ── FINAL CTA ── */}
           <section className="relative px-4 py-28 border-t border-gray-800/30">
-            <div className="max-w-2xl mx-auto text-center space-y-6">
-              <h3 className="text-3xl md:text-5xl font-bold text-white leading-tight">
+            <div className="max-w-3xl mx-auto text-center space-y-8">
+              <h3 className="text-4xl md:text-6xl lg:text-7xl font-extrabold text-white leading-tight">
                 Ready to protect<br />
                 <span className="bg-gradient-to-r from-green-400 to-emerald-300 bg-clip-text text-transparent">your transactions?</span>
               </h3>
-              <p className="text-gray-500 text-sm max-w-md mx-auto">
+              <p className="text-gray-400 text-base md:text-lg max-w-lg mx-auto leading-relaxed">
                 Connect your wallet and experience AI-powered transaction security on Monad Testnet.
               </p>
-              <div className="pt-2">
+              <div className="pt-4 flex justify-center">
                 <ConnectWallet />
               </div>
             </div>
           </section>
+
+          {/* ── FOOTER ── */}
+          <footer className="relative border-t border-gray-800/40 px-4 py-8">
+            <div className="max-w-5xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <HydraLogo size={24} />
+                <span className="text-sm font-bold text-gray-500">HYDRA</span>
+              </div>
+              <div className="flex items-center gap-6 text-sm text-gray-600">
+                <span>
+                  Powered by{' '}
+                  <a href="https://x.com/OverBlock_" target="_blank" rel="noopener noreferrer" className="text-green-400 hover:text-green-300 transition-colors font-medium">
+                    OverBlock
+                  </a>
+                </span>
+                <span className="text-gray-800">|</span>
+                <span>
+                  Created by{' '}
+                  <a href="https://x.com/kaptan_web3" target="_blank" rel="noopener noreferrer" className="text-green-400 hover:text-green-300 transition-colors font-medium">
+                    Kaptan
+                  </a>
+                </span>
+              </div>
+            </div>
+          </footer>
         </div>
       ) : (
         <div className="max-w-5xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
