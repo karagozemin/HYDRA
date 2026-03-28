@@ -9,7 +9,18 @@ const MOCK_RESPONSES = {
   safe: { approve: true, reason: 'Position size within acceptable limits. Portfolio diversification maintained.', risk_score: 18 },
 };
 
+const KNOWN_SCAM_ADDRESSES = new Set([
+  '0x000000000000000000000000000000000000dead',
+  '0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead',
+]);
+
 export async function analyzeTransaction({ to, value, txId }) {
+  const toLC = to.toLowerCase();
+  if (KNOWN_SCAM_ADDRESSES.has(toLC)) {
+    console.log(`[Portfolio] ⚠️  Known scam address: ${to}`);
+    return { approve: false, reason: 'Refusing allocation to flagged address. Portfolio protection triggered.', risk_score: 95 };
+  }
+
   const ownerAddress = process.env.OWNER_ADDRESS;
 
   let portfolioContext = 'Balance unavailable';

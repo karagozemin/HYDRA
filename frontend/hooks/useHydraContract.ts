@@ -5,7 +5,7 @@ import { parseEther } from 'viem';
 import { CONTRACT_ADDRESS, HYDRA_ABI } from '../lib/constants';
 
 export function useHydraContract() {
-  const { writeContract, data: submitHash, isPending, error } = useWriteContract();
+  const { writeContract, data: submitHash, isPending, error, reset } = useWriteContract();
 
   const submitTransaction = (to: `0x${string}`, valueEther: string, data: `0x${string}` = '0x') => {
     writeContract({
@@ -37,6 +37,7 @@ export function useHydraContract() {
     isSuccess,
     submitHash,
     error,
+    reset,
   };
 }
 
@@ -45,6 +46,7 @@ export function useTxCount() {
     address: CONTRACT_ADDRESS,
     abi: HYDRA_ABI,
     functionName: 'txCount',
+    query: { refetchInterval: 1000 },
   });
 }
 
@@ -54,7 +56,7 @@ export function useCanExecute(txId: bigint | null) {
     abi: HYDRA_ABI,
     functionName: 'canExecute',
     args: txId !== null ? [txId] : undefined,
-    query: { enabled: txId !== null },
+    query: { enabled: txId !== null, refetchInterval: 1000 },
   });
 }
 
@@ -66,7 +68,7 @@ export function useGetVote(txId: bigint | null, agentAddress: `0x${string}`) {
     args: txId !== null ? [txId, agentAddress] : undefined,
     query: {
       enabled: txId !== null && !!agentAddress,
-      refetchInterval: 3000,
+      refetchInterval: 1000,
     },
   });
 }

@@ -8,6 +8,12 @@ const MOCK_RESPONSES = {
   safe: { approve: true, reason: 'Liquidity depth adequate. Price impact minimal. Volatility within normal range.', risk_score: 22 },
 };
 
+// Shared scam list — all agents must reject known scam addresses
+const KNOWN_SCAM_ADDRESSES = new Set([
+  '0x000000000000000000000000000000000000dead',
+  '0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead',
+]);
+
 // 4-byte selectors for common high-risk operations
 const HIGH_RISK_SELECTORS = new Set([
   '0x095ea7b3', // approve (unlimited)
@@ -15,6 +21,12 @@ const HIGH_RISK_SELECTORS = new Set([
 ]);
 
 export async function analyzeTransaction({ to, value, data, txId }) {
+  const toLC = to.toLowerCase();
+  if (KNOWN_SCAM_ADDRESSES.has(toLC)) {
+    console.log(`[Risk] ⚠️  Known scam address: ${to}`);
+    return { approve: false, reason: 'Target address is flagged as high-risk. Transaction should not proceed.', risk_score: 95 };
+  }
+
   const valueEther = parseFloat(formatEther(BigInt(value.toString())));
 
   // Fast-path: very large transfer → high risk

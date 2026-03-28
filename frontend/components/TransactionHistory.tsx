@@ -51,7 +51,8 @@ interface TransactionHistoryProps {
 }
 
 export function TransactionHistory({ txCount }: TransactionHistoryProps) {
-  const ids = Array.from({ length: Math.min(Number(txCount), 10) }, (_, i) => BigInt(txCount) - BigInt(i + 1)).filter(id => id >= 0n);
+  const count = Number(txCount);
+  const ids = Array.from({ length: Math.min(count, 10) }, (_, i) => BigInt(count - i)).filter(id => id >= 1n);
 
   if (ids.length === 0) {
     return <p className="text-xs text-gray-700 text-center py-4 font-mono">No transactions yet.</p>;
