@@ -1,0 +1,15 @@
+{
+  "name": "hydra-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "viem": "^2.21.0",
+    "groq-sdk": "^0.7.0",
+    "dotenv": "^16.4.5"
+  }
+}
