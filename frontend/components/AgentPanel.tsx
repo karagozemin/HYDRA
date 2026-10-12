@@ -131,7 +131,7 @@ export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
               href={`https://testnet.monadexplorer.com/tx/${execHash}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-block text-xs text-gray-600 hover:text-green-400 font-mono transition"
+              className="inline-block text-xs text-purple-400 hover:text-purple-300 font-mono transition"
             >
               tx: {execHash.slice(0, 10)}...{execHash.slice(-8)} ↗
             </a>
