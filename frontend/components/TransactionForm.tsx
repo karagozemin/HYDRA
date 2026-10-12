@@ -81,9 +81,14 @@ export function TransactionForm({ onSubmitted, onConfirmed }: TransactionFormPro
       </button>
 
       {submitHash && (
-        <p className="text-xs text-gray-600 font-mono truncate text-center">
-          tx: {submitHash}
-        </p>
+        <a
+          href={`https://testnet.monadexplorer.com/tx/${submitHash}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="block text-xs text-gray-600 hover:text-green-400 font-mono truncate text-center transition"
+        >
+          tx: {submitHash.slice(0, 10)}...{submitHash.slice(-8)} ↗
+        </a>
       )}
     </form>
   );
