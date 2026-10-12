@@ -74,9 +74,9 @@ export function startOrchestrator() {
 
         console.log(`   Analysis complete in ${Date.now() - startTime}ms`);
 
-        // ─── STEP 2: Submit votes sequentially (shared approvalCount/rejectionCount slot) ─
-        console.log('⚡ Submitting votes to Monad (sequential)...');
-        const voteStart = Date.now();
+        // ─── STEP 2: Submit votes ──────────────────────────────────────────
+        const allResults = [securityResult, riskResult, portfolioResult];
+        const rejectCount = allResults.filter(r => !r.approve).length;
 
         const allVotes = [
           { result: securityResult, wallet: securityWallet, label: 'Security' },
@@ -84,12 +84,24 @@ export function startOrchestrator() {
           { result: portfolioResult, wallet: portfolioWallet, label: 'Portfolio' },
         ];
 
-        for (const { result: res, wallet, label } of allVotes) {
-          const r = await submitVote(txId, res, wallet, label);
-          if (r.resolved) {
-            console.log(`   ⏭️  Remaining votes skipped (tx already resolved)`);
-            break;
+        const voteStart = Date.now();
+
+        if (rejectCount >= 2) {
+          // Sequential: rejections trigger _tryResolve which can close the tx mid-flight
+          console.log('⚡ Submitting votes sequentially (rejection path)...');
+          for (const { result: res, wallet, label } of allVotes) {
+            const r = await submitVote(txId, res, wallet, label);
+            if (r.resolved) {
+              console.log(`   ⏭️  Remaining votes skipped (tx resolved)`);
+              break;
+            }
           }
+        } else {
+          // Parallel: approvals don't trigger _tryResolve, independent vote slots = zero contention
+          console.log('⚡ Submitting votes in PARALLEL (approval path → same Monad block)...');
+          await Promise.all(allVotes.map(({ result: res, wallet, label }) =>
+            submitVote(txId, res, wallet, label)
+          ));
         }
 
         console.log(`   Done in ${Date.now() - voteStart}ms`);
