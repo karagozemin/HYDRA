@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAccount } from 'wagmi';
 import { ConnectWallet } from '../components/ConnectWallet';
 import { TransactionForm } from '../components/TransactionForm';
@@ -13,18 +13,34 @@ import { useTxCount } from '../hooks/useHydraContract';
 export default function Home() {
   const { isConnected } = useAccount();
   const [activeTxId, setActiveTxId] = useState<bigint | null>(null);
-  const [analyzing, setAnalyzing] = useState(false);
-  const { data: txCount } = useTxCount();
+  const [phase, setPhase] = useState<'idle' | 'wallet' | 'confirming' | 'analyzing'>('idle');
+  const { data: txCount, refetch: refetchTxCount } = useTxCount();
+  const txCountAtSubmit = useRef<bigint>(BigInt(0));
 
-  const handleSubmitted = (txId: bigint | null) => {
-    setActiveTxId(txId);
-    setAnalyzing(true);
+  // When txCount increases past snapshot → we have the new txId
+  useEffect(() => {
+    if (phase === 'confirming' && txCount !== undefined && txCount > txCountAtSubmit.current) {
+      setActiveTxId(txCount);
+      setPhase('analyzing');
+    }
+  }, [txCount, phase]);
+
+  const handleSubmitted = () => {
+    txCountAtSubmit.current = txCount ?? 0n;
+    setActiveTxId(null);
+    setPhase('wallet');
+  };
+
+  const handleConfirmed = () => {
+    setPhase('confirming');
+    // Aggressively poll for the new txCount
+    const interval = setInterval(() => refetchTxCount(), 500);
+    setTimeout(() => clearInterval(interval), 30000);
   };
 
   return (
     <main className="min-h-screen bg-black text-white">
       <WrongNetworkBanner />
-      {/* Header */}
       <header className="border-b border-gray-900 px-6 py-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <HydraLogo />
@@ -37,7 +53,6 @@ export default function Home() {
       </header>
 
       {!isConnected ? (
-        /* Hero / Not connected */
         <div className="flex flex-col items-center justify-center min-h-[80vh] gap-6 px-4 text-center">
           <div className="text-6xl">🐉</div>
           <h2 className="text-3xl font-bold">Cut one head.</h2>
@@ -49,16 +64,13 @@ export default function Home() {
           <ConnectWallet />
         </div>
       ) : (
-        /* Dashboard */
         <div className="max-w-5xl mx-auto px-4 py-8 grid grid-cols-1 lg:grid-cols-2 gap-8">
-
-          {/* Left: Submit + History */}
           <div className="space-y-6">
             <section className="bg-gray-950 border border-gray-900 rounded-2xl p-6">
               <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-5">
                 New Transaction
               </h2>
-              <TransactionForm onSubmitted={handleSubmitted} />
+              <TransactionForm onSubmitted={handleSubmitted} onConfirmed={handleConfirmed} />
             </section>
 
             <section className="bg-gray-950 border border-gray-900 rounded-2xl p-6">
@@ -69,20 +81,32 @@ export default function Home() {
             </section>
           </div>
 
-          {/* Right: Agent Panel */}
           <div className="bg-gray-950 border border-gray-900 rounded-2xl p-6 h-fit">
-            {!analyzing ? (
+            {phase === 'idle' && (
               <div className="flex flex-col items-center justify-center py-12 gap-4 text-center">
                 <div className="text-4xl opacity-30">🛡️📊💼</div>
-                <p className="text-gray-700 text-sm font-mono">
-                  Submit a transaction to activate the AI guardians.
-                </p>
+                <p className="text-gray-700 text-sm font-mono">Submit a transaction to activate the AI guardians.</p>
               </div>
-            ) : (
-              <AgentPanel txId={activeTxId} isSubmitting={analyzing} />
+            )}
+            {phase === 'wallet' && (
+              <div className="flex flex-col items-center justify-center py-12 gap-4 text-center">
+                <div className="text-4xl">🦊</div>
+                <p className="text-yellow-400 text-sm font-mono">Confirm in your wallet...</p>
+              </div>
+            )}
+            {phase === 'confirming' && (
+              <div className="flex flex-col items-center justify-center py-12 gap-4 text-center">
+                <div className="text-4xl">⛓️</div>
+                <p className="text-green-400 text-sm font-mono">Confirming on Monad...</p>
+                <div className="w-32 bg-gray-800 rounded-full h-1 mt-2">
+                  <div className="h-1 rounded-full bg-green-500/60 animate-analyzing-bar" />
+                </div>
+              </div>
+            )}
+            {phase === 'analyzing' && activeTxId !== null && (
+              <AgentPanel txId={activeTxId} isSubmitting={false} />
             )}
           </div>
-
         </div>
       )}
     </main>
