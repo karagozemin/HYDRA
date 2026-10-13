@@ -10,6 +10,7 @@ import { HydraLogo } from '../components/HydraLogo';
 import { WrongNetworkBanner } from '../components/WrongNetworkBanner';
 import { useTxCount } from '../hooks/useHydraContract';
 import { AgentReputation } from '../components/AgentReputation';
+import { OrchestratorStatus } from '../components/OrchestratorStatus';
 import dynamic from 'next/dynamic';
 
 const DarkVeil = dynamic(() => import('../components/DarkVeil'), { ssr: false });
@@ -54,6 +55,7 @@ export default function Home() {
           <div>
             <h1 className="text-lg font-bold tracking-tight">HYDRA</h1>
             <p className="text-xs text-gray-600 font-mono">Parallel AI Multisig · Monad</p>
+            <OrchestratorStatus />
           </div>
         </div>
         <ConnectWallet />
