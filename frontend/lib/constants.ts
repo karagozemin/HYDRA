@@ -122,5 +122,12 @@ export const HYDRA_ABI = [
     "inputs": [],
     "outputs": [{ "name": "", "type": "address" }],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "agentReputation",
+    "inputs": [{ "name": "agent", "type": "address" }],
+    "outputs": [{ "name": "", "type": "uint256" }],
+    "stateMutability": "view"
   }
 ] as const;

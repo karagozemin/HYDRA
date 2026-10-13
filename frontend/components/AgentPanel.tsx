@@ -5,6 +5,7 @@ import { AgentCard, AgentStatus } from './AgentCard';
 import { useGetVote, useCanExecute, useHydraContract } from '../hooks/useHydraContract';
 import { useReadContract } from 'wagmi';
 import { AGENT1_ADDRESS, AGENT2_ADDRESS, AGENT3_ADDRESS, CONTRACT_ADDRESS, HYDRA_ABI } from '../lib/constants';
+import { ParallelProof } from './ParallelProof';
 
 interface AgentPanelProps {
   txId: bigint | null;
@@ -12,16 +13,16 @@ interface AgentPanelProps {
 }
 
 interface AgentResult {
-  status: AgentStatus;
+  status: AgentStatus;  // includes 'error'
   reason?: string;
   riskScore?: number;
 }
 
 function useAgentVote(txId: bigint | null, address: `0x${string}`, txResolved: boolean): AgentResult {
-  const { data } = useGetVote(txId, address);
+  const { data, error } = useGetVote(txId, address);
   if (!txId) return { status: 'idle' };
+  if (error) return { status: 'error', reason: 'Failed to read agent vote from contract.' };
   if (!data || !data[0]) {
-    // If tx is already resolved (rejected/executed) but this agent didn't vote, it was skipped
     if (txResolved) return { status: 'rejected', reason: 'Vote skipped — transaction already resolved.', riskScore: 0 };
     return { status: 'analyzing' };
   }
@@ -41,7 +42,7 @@ export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
     query: { enabled: txId !== null, refetchInterval: 3000 },
   });
 
-  const { executeTransaction, isPending: execPending, isConfirming: execConfirming, isSuccess: execSuccess, submitHash: execHash } = useHydraContract();
+  const { executeTransaction, isPending: execPending, isConfirming: execConfirming, isSuccess: execSuccess, submitHash: execHash, error: execError, reset: execReset } = useHydraContract();
 
   const isExecuted = txData ? (txData as any)[2] : false;
   const isRejected = txData ? (txData as any)[3] : false;
@@ -54,16 +55,27 @@ export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
   // Staggered reveal
   const [revealCount, setRevealCount] = useState(0);
   const [prevTxId, setPrevTxId] = useState<bigint | null>(null);
+  const [timedOut, setTimedOut] = useState(false);
 
   const realResults = [security, risk, portfolio];
-  const readyCount = realResults.filter(v => v.status !== 'idle' && v.status !== 'analyzing').length;
+  const readyCount = realResults.filter(v => v.status !== 'idle' && v.status !== 'analyzing').length;  // error counts as ready
 
+  // Reset on new txId
   useEffect(() => {
     if (txId !== prevTxId) {
       setRevealCount(0);
       setPrevTxId(txId);
+      setTimedOut(false);
     }
   }, [txId, prevTxId]);
+
+  // Timeout — if agents don't respond in 30s, show timeout
+  useEffect(() => {
+    if (txId && readyCount < 3 && !timedOut) {
+      const timer = setTimeout(() => setTimedOut(true), 30000);
+      return () => clearTimeout(timer);
+    }
+  }, [txId, readyCount, timedOut]);
 
   useEffect(() => {
     if (readyCount > revealCount) {
@@ -84,7 +96,20 @@ export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
   const allRevealed = revealCount >= 3 && readyCount >= 3;
   const approvals = allRevealed ? realResults.filter(v => v.status === 'approved').length : 0;
 
+  const [execErrorMsg, setExecErrorMsg] = useState('');
+
+  useEffect(() => {
+    if (execError) {
+      const msg = execError.message?.includes('User rejected')
+        ? 'Transaction rejected by wallet.'
+        : 'Execution failed. Please try again.';
+      setExecErrorMsg(msg);
+      execReset();
+    }
+  }, [execError, execReset]);
+
   const handleExecute = () => {
+    setExecErrorMsg('');
     if (txId !== null) executeTransaction(txId);
   };
 
@@ -105,6 +130,9 @@ export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
       <AgentCard name="Risk Agent"     icon="📊" color="yellow" {...displayed[1]} />
       <AgentCard name="Portfolio Agent" icon="💼" color="blue"   {...displayed[2]} />
 
+      {/* Parallel Proof — show after all agents revealed */}
+      {allRevealed && txId !== null && <ParallelProof txId={txId} />}
+
       {/* Approved → Execute Button */}
       {allRevealed && approvals >= 2 && !isExecuted && !isRejected && (
         <div className="rounded-xl bg-green-900/20 border border-green-800 p-5 text-center animate-fade-in space-y-3">
@@ -117,6 +145,9 @@ export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
           >
             {execPending ? 'Confirm in wallet...' : execConfirming ? 'Executing...' : 'Execute Transfer'}
           </button>
+          {execErrorMsg && (
+            <p className="text-red-400 text-xs font-mono mt-2">{execErrorMsg}</p>
+          )}
         </div>
       )}
 
@@ -145,6 +176,15 @@ export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
           <div className="text-2xl mb-2">🛡️</div>
           <div className="text-red-400 font-bold text-sm">Transaction Blocked</div>
           <div className="text-gray-500 text-xs mt-1">HYDRA protected your wallet.</div>
+        </div>
+      )}
+
+      {/* Timeout */}
+      {timedOut && !allRevealed && !isExecuted && !isRejected && (
+        <div className="rounded-xl bg-yellow-900/20 border border-yellow-800 p-5 text-center animate-fade-in">
+          <div className="text-2xl mb-2">⏱️</div>
+          <div className="text-yellow-400 font-bold text-sm">Agent Timeout</div>
+          <div className="text-gray-500 text-xs mt-1">Agents did not respond in time. Please try again.</div>
         </div>
       )}
     </div>

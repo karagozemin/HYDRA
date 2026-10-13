@@ -140,8 +140,12 @@ _tryResolve(txId)                              // Auto-reject at 2+ rejections
   - Risk score bars with color coding (green/yellow/red)
   - Reason text from AI analysis
 - **Execute Button** — Appears only after 2/3 approval
-- **Transaction History** — Last 10 transactions with status badges
+- **Transaction History** — Last 10 transactions with status badges (owner-only)
 - **Clickable tx hashes** — Links to Monad Explorer
+- **Parallel Execution Proof** — After all 3 agents vote, a proof banner shows each vote's block number. If all land in the same block, it displays "Parallel Execution Proven" with direct Monad Explorer links per vote tx.
+- **Agent Reputation Dashboard** — Reads on-chain `agentReputation` mapping and displays each agent's approval count with progress bars. Updated every 5s.
+- **Error Handling** — Wallet rejections, contract reverts, and read failures are caught and displayed inline. Agent cards show orange `ERROR` state on contract read failures. Failed executions show error below the button. Wallet rejection resets the UI phase back to idle.
+- **Agent Timeout** — If agents don't respond within 30 seconds, a yellow "Agent Timeout" banner appears instead of staying stuck on "Analyzing..." forever.
 
 ---
 
@@ -212,6 +216,23 @@ Open `http://localhost:3000`, connect wallet, submit a transaction.
 
 ---
 
+## Parallel Execution Proof
+
+After agents vote, the frontend fetches `AgentVoted` event logs and extracts the block number from each vote transaction. If all 3 votes share the same block number, a purple proof banner is rendered:
+
+```
+  Parallel Execution Proven
+  All 3 votes landed in block #4821037 — Monad parallel EVM
+
+  Security Agent    block #4821037   tx ->
+  Risk Agent        block #4821037   tx ->
+  Portfolio Agent   block #4821037   tx ->
+```
+
+Each vote tx links directly to Monad Explorer. No contract changes required — proof is derived from on-chain event logs.
+
+---
+
 ## Demo Scenarios
 
 | Scenario | Address | Expected Result |
@@ -251,11 +272,13 @@ HYDRA/
     components/
       TransactionForm.tsx       # Submit tx form
       AgentPanel.tsx            # Live agent voting display
-      AgentCard.tsx             # Individual agent card
-      TransactionHistory.tsx    # Tx history list
+      AgentCard.tsx             # Individual agent card (5 states: idle/analyzing/approved/rejected/error)
+      TransactionHistory.tsx    # Tx history list (owner-only)
+      AgentReputation.tsx       # On-chain reputation dashboard
+      ParallelProof.tsx         # Same-block proof via event logs
       ConnectWallet.tsx         # Wallet connector
       WrongNetworkBanner.tsx    # Network switch
-      HydraLogo.tsx             # SVG logo
+      HydraLogo.tsx             # Logo component
     hooks/useHydraContract.ts   # Contract interaction hooks
     lib/
       constants.ts              # Addresses + ABI

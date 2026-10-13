@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 
-export type AgentStatus = 'idle' | 'analyzing' | 'approved' | 'rejected';
+export type AgentStatus = 'idle' | 'analyzing' | 'approved' | 'rejected' | 'error';
 
 interface AgentCardProps {
   name: string;
@@ -34,7 +34,7 @@ export function AgentCard({ name, icon, status, reason, riskScore, color }: Agen
       }, 600);
       return () => clearInterval(interval);
     }
-    if (status === 'approved' || status === 'rejected') {
+    if (status === 'approved' || status === 'rejected' || status === 'error') {
       const timer = setTimeout(() => setRevealed(true), 100);
       return () => clearTimeout(timer);
     }
@@ -45,6 +45,7 @@ export function AgentCard({ name, icon, status, reason, riskScore, color }: Agen
     analyzing: { label: ANALYZING_STEPS[analyzeStep], ring: 'ring-yellow-500/50 animate-pulse', dot: 'bg-yellow-400 animate-pulse' },
     approved:  { label: 'APPROVED',             ring: 'ring-green-500',         dot: 'bg-green-400' },
     rejected:  { label: 'REJECTED',             ring: 'ring-red-500',           dot: 'bg-red-400' },
+    error:     { label: 'ERROR',                ring: 'ring-orange-500',        dot: 'bg-orange-400' },
   }[status];
 
   return (
@@ -56,6 +57,7 @@ export function AgentCard({ name, icon, status, reason, riskScore, color }: Agen
           <div className={`text-xs font-mono mt-0.5 transition-all duration-300 ${
             status === 'approved' ? 'text-green-400' :
             status === 'rejected' ? 'text-red-400' :
+            status === 'error' ? 'text-orange-400' :
             status === 'analyzing' ? 'text-yellow-400' : 'text-gray-600'
           }`}>
             {statusConfig.label}
