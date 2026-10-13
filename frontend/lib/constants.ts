@@ -115,5 +115,12 @@ export const HYDRA_ABI = [
     "type": "event",
     "name": "TransactionRejected",
     "inputs": [{ "name": "txId", "type": "uint256", "indexed": true }]
+  },
+  {
+    "type": "function",
+    "name": "owner",
+    "inputs": [],
+    "outputs": [{ "name": "", "type": "address" }],
+    "stateMutability": "view"
   }
 ] as const;
