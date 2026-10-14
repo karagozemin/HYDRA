@@ -1,8 +1,10 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useHydraContract } from '../hooks/useHydraContract';
+import { useHydraAccess, useHydraContract } from '../hooks/useHydraContract';
 import { isAddress } from 'viem';
+import { formatHydraError } from '../lib/contractError';
+import { MONAD_TESTNET_EXPLORER_URL, MONAD_TESTNET_FAUCET_URL } from '../lib/network';
 
 interface TransactionFormProps {
   onSubmitted: () => void;
@@ -16,6 +18,18 @@ export function TransactionForm({ onSubmitted, onConfirmed, onError }: Transacti
   const [error, setError] = useState('');
 
   const { submitTransaction, isPending, isConfirming, isSuccess, submitHash, error: contractError, reset } = useHydraContract();
+  const { owner, isOwner, hasGas, isWrongNetwork, isLoading: isAccessLoading, readError } = useHydraAccess();
+
+  const ownerLabel = owner ? `${owner.slice(0, 6)}...${owner.slice(-4)}` : '';
+  const accessIssue = isWrongNetwork
+    ? 'Switch to Monad Testnet before submitting.'
+    : readError
+      ? 'Unable to verify the wallet against Monad Testnet. Check the RPC connection.'
+      : isOwner === false
+        ? `Owner wallet required. Connect ${ownerLabel}.`
+        : hasGas === false
+          ? 'The owner wallet needs MON to pay network gas.'
+          : '';
 
   // When tx is confirmed on-chain, notify parent
   useEffect(() => {
@@ -28,21 +42,22 @@ export function TransactionForm({ onSubmitted, onConfirmed, onError }: Transacti
   // Show contract/wallet errors and reset phase
   useEffect(() => {
     if (contractError) {
-      const msg = contractError.message?.includes('User rejected')
-        ? 'Transaction rejected by wallet.'
-        : contractError.message?.includes('insufficient funds')
-        ? 'Insufficient funds in contract.'
-        : 'Transaction failed. Please try again.';
-      setError(msg);
+      setError(formatHydraError(contractError, 'submit'));
       onError();
+      reset();
     }
-  }, [contractError, onError]);
+  }, [contractError, onError, reset]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     reset();
 
+    if (accessIssue) { setError(accessIssue); return; }
+    if (isAccessLoading || isOwner !== true || hasGas !== true) {
+      setError('Wallet permissions are still being verified. Please wait a moment.');
+      return;
+    }
     if (!isAddress(to)) { setError('Invalid address'); return; }
     if (!value || isNaN(Number(value)) || Number(value) <= 0) { setError('Invalid amount'); return; }
 
@@ -86,19 +101,45 @@ export function TransactionForm({ onSubmitted, onConfirmed, onError }: Transacti
         />
       </div>
 
-      {error && <p className="text-red-400 text-xs font-mono">{error}</p>}
+      {accessIssue && (
+        <div className="rounded-lg border border-yellow-800/60 bg-yellow-950/30 px-3 py-2.5 text-xs font-mono text-yellow-300">
+          <p>{accessIssue}</p>
+          {hasGas === false && (
+            <a
+              href={MONAD_TESTNET_FAUCET_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 inline-block text-green-400 hover:text-green-300"
+            >
+              Get testnet MON ↗
+            </a>
+          )}
+        </div>
+      )}
+
+      {error && error !== accessIssue && <p className="text-red-400 text-xs font-mono">{error}</p>}
 
       <button
         type="submit"
-        disabled={isPending || isConfirming}
+        disabled={isPending || isConfirming || isAccessLoading || Boolean(accessIssue) || isOwner !== true || hasGas !== true}
         className="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-800 disabled:text-gray-600 text-black font-bold py-3 rounded-lg text-sm transition-all duration-200"
       >
-        {isPending ? 'Waiting for wallet...' : isConfirming ? 'Confirming...' : 'Submit Transaction'}
+        {isPending
+          ? 'Waiting for wallet...'
+          : isConfirming
+            ? 'Confirming...'
+            : isAccessLoading
+              ? 'Checking wallet...'
+              : isOwner === false
+                ? 'Owner Wallet Required'
+                : hasGas === false
+                  ? 'MON Required for Gas'
+                  : 'Submit Transaction'}
       </button>
 
       {submitHash && (
         <a
-          href={`https://testnet.monadexplorer.com/tx/${submitHash}`}
+          href={`${MONAD_TESTNET_EXPLORER_URL}/tx/${submitHash}`}
           target="_blank"
           rel="noopener noreferrer"
           className="block text-xs text-purple-400 hover:text-purple-300 font-mono truncate text-center transition"

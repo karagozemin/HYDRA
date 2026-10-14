@@ -1,8 +1,9 @@
 'use client';
 
-import { useWriteContract, useWaitForTransactionReceipt, useReadContract } from 'wagmi';
-import { parseEther } from 'viem';
+import { useWriteContract, useWaitForTransactionReceipt, useReadContract, useAccount, useBalance } from 'wagmi';
+import { isAddressEqual, parseEther } from 'viem';
 import { CONTRACT_ADDRESS, HYDRA_ABI } from '../lib/constants';
+import { monadTestnet } from '../lib/wagmiConfig';
 
 export function useHydraContract() {
   const { writeContract, data: submitHash, isPending, error, reset } = useWriteContract();
@@ -38,6 +39,39 @@ export function useHydraContract() {
     submitHash,
     error,
     reset,
+  };
+}
+
+export function useHydraAccess() {
+  const { address, chainId, isConnected } = useAccount();
+  const ownerQuery = useReadContract({
+    address: CONTRACT_ADDRESS,
+    abi: HYDRA_ABI,
+    functionName: 'owner',
+    query: { retry: 2 },
+  });
+  const balanceQuery = useBalance({
+    address,
+    chainId: monadTestnet.id,
+    query: {
+      enabled: Boolean(address) && chainId === monadTestnet.id,
+      refetchInterval: 15_000,
+    },
+  });
+
+  const owner = ownerQuery.data as `0x${string}` | undefined;
+  const isOwner = address && owner ? isAddressEqual(address, owner) : undefined;
+  const hasGas = balanceQuery.data ? balanceQuery.data.value > 0n : undefined;
+
+  return {
+    address,
+    owner,
+    isConnected,
+    isOwner,
+    hasGas,
+    isWrongNetwork: isConnected && chainId !== monadTestnet.id,
+    isLoading: ownerQuery.isLoading || balanceQuery.isLoading,
+    readError: ownerQuery.error || balanceQuery.error,
   };
 }
 

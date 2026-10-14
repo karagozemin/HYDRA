@@ -2,10 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { AgentCard, AgentStatus } from './AgentCard';
-import { useGetVote, useHydraContract } from '../hooks/useHydraContract';
+import { useGetVote, useHydraAccess, useHydraContract } from '../hooks/useHydraContract';
 import { useReadContract } from 'wagmi';
 import { AGENT1_ADDRESS, AGENT2_ADDRESS, AGENT3_ADDRESS, CONTRACT_ADDRESS, HYDRA_ABI } from '../lib/constants';
 import { ParallelProof } from './ParallelProof';
+import { formatHydraError } from '../lib/contractError';
+import { MONAD_TESTNET_EXPLORER_URL } from '../lib/network';
 
 interface AgentPanelProps {
   txId: bigint | null;
@@ -42,6 +44,7 @@ export function AgentPanel({ txId }: AgentPanelProps) {
   });
 
   const { executeTransaction, isPending: execPending, isConfirming: execConfirming, submitHash: execHash, error: execError, reset: execReset } = useHydraContract();
+  const { owner, isOwner, hasGas, isWrongNetwork, isLoading: isAccessLoading, readError } = useHydraAccess();
 
   const isExecuted = txData ? (txData as readonly unknown[])[2] as boolean : false;
   const isRejected = txData ? (txData as readonly unknown[])[3] as boolean : false;
@@ -97,18 +100,30 @@ export function AgentPanel({ txId }: AgentPanelProps) {
 
   const [execErrorMsg, setExecErrorMsg] = useState('');
 
+  const ownerLabel = owner ? `${owner.slice(0, 6)}...${owner.slice(-4)}` : '';
+  const executeAccessIssue = isWrongNetwork
+    ? 'Switch to Monad Testnet before executing.'
+    : readError
+      ? 'Unable to verify the wallet against Monad Testnet. Check the RPC connection.'
+      : isOwner === false
+        ? `Only the owner wallet (${ownerLabel}) can execute.`
+        : hasGas === false
+          ? 'The owner wallet needs MON to pay network gas.'
+          : '';
+
   useEffect(() => {
     if (execError) {
-      const msg = execError.message?.includes('User rejected')
-        ? 'Transaction rejected by wallet.'
-        : 'Execution failed. Please try again.';
-      setExecErrorMsg(msg);
+      setExecErrorMsg(formatHydraError(execError, 'execute'));
       execReset();
     }
   }, [execError, execReset]);
 
   const handleExecute = () => {
     setExecErrorMsg('');
+    if (executeAccessIssue) {
+      setExecErrorMsg(executeAccessIssue);
+      return;
+    }
     if (txId !== null) executeTransaction(txId);
   };
 
@@ -139,11 +154,24 @@ export function AgentPanel({ txId }: AgentPanelProps) {
           <div className="text-gray-500 text-xs">{approvals} heads approved. Ready to execute.</div>
           <button
             onClick={handleExecute}
-            disabled={execPending || execConfirming}
+            disabled={execPending || execConfirming || isAccessLoading || Boolean(executeAccessIssue) || isOwner !== true || hasGas !== true}
             className="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-800 disabled:text-gray-600 text-black font-bold py-3 rounded-lg text-sm transition-all duration-200"
           >
-            {execPending ? 'Confirm in wallet...' : execConfirming ? 'Executing...' : 'Execute Transfer'}
+            {execPending
+              ? 'Confirm in wallet...'
+              : execConfirming
+                ? 'Executing...'
+                : isAccessLoading
+                  ? 'Checking wallet...'
+                  : isOwner === false
+                    ? 'Owner Wallet Required'
+                    : hasGas === false
+                      ? 'MON Required for Gas'
+                      : 'Execute Transfer'}
           </button>
+          {executeAccessIssue && (
+            <p className="text-yellow-300 text-xs font-mono mt-2">{executeAccessIssue}</p>
+          )}
           {execErrorMsg && (
             <p className="text-red-400 text-xs font-mono mt-2">{execErrorMsg}</p>
           )}
@@ -158,7 +186,7 @@ export function AgentPanel({ txId }: AgentPanelProps) {
           <div className="text-gray-500 text-xs">Funds transferred successfully.</div>
           {execHash && (
             <a
-              href={`https://testnet.monadexplorer.com/tx/${execHash}`}
+              href={`${MONAD_TESTNET_EXPLORER_URL}/tx/${execHash}`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-block text-xs text-purple-400 hover:text-purple-300 font-mono transition"

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useAccount } from 'wagmi';
 import { monadTestnet } from '../lib/wagmiConfig';
+import { MONAD_TESTNET_EXPLORER_URL, MONAD_TESTNET_RPC_URL } from '../lib/network';
 
 const MONAD_CHAIN_ID = monadTestnet.id;
 const CHAIN_HEX = `0x${MONAD_CHAIN_ID.toString(16)}`;
@@ -34,8 +35,8 @@ export function WrongNetworkBanner() {
               chainId: CHAIN_HEX,
               chainName: 'Monad Testnet',
               nativeCurrency: { name: 'MON', symbol: 'MON', decimals: 18 },
-              rpcUrls: ['https://testnet-rpc.monad.xyz'],
-              blockExplorerUrls: ['https://testnet.monadexplorer.com'],
+              rpcUrls: [MONAD_TESTNET_RPC_URL],
+              blockExplorerUrls: [MONAD_TESTNET_EXPLORER_URL],
             }],
           });
         }

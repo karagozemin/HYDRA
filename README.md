@@ -240,6 +240,8 @@ Create `frontend/.env.local`:
 
 ```dotenv
 NEXT_PUBLIC_WALLETCONNECT_ID=...
+NEXT_PUBLIC_APP_URL=http://localhost:3000
+NEXT_PUBLIC_MONAD_RPC_URL=https://testnet-rpc.monad.xyz
 NEXT_PUBLIC_CONTRACT_ADDRESS=0x...
 NEXT_PUBLIC_AGENT1_ADDRESS=0x...
 NEXT_PUBLIC_AGENT2_ADDRESS=0x...
@@ -268,6 +270,9 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000), connect the owner wallet,
 and switch to the configured Monad testnet.
+
+For production, set `NEXT_PUBLIC_APP_URL` to the exact deployed origin and add
+that same origin to the WalletConnect/Reown project domain allowlist.
 
 ### 7. Confirm health
 
