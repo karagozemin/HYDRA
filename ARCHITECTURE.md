@@ -143,22 +143,13 @@ sequenceDiagram
 
     Owner->>UI: Enter target and native amount
     UI->>Guard: submitTransaction(to, value, data)
-    Guard-->>Orch: TransactionSubmitted(txId, to, value, owner)
-    Note over Guard,Orch: Current event omits data; backend defaults it to 0x
-    par Security analysis
-        Orch->>Agents: securityAnalyze(...)
-        Agents->>Groq: JSON-constrained prompt
-        Groq-->>Agents: decision
-    and Risk analysis
-        Orch->>Agents: riskAnalyze(...)
-        Agents->>Groq: JSON-constrained prompt
-        Groq-->>Agents: decision
-    and Portfolio analysis
-        Orch->>Agents: portfolioAnalyze(...)
-        Agents->>Groq: JSON-constrained prompt
-        Groq-->>Agents: decision
-    end
-    Orch->>Guard: agentVote(...) from agent account(s)
+    Guard-->>Orch: TransactionSubmitted event
+    Note right of Guard: Event omits calldata
+    Orch->>Agents: Run 3 analyses concurrently
+    Agents->>Groq: Request JSON decisions when needed
+    Groq-->>Agents: Return model outputs
+    Agents-->>Orch: Return 3 decisions
+    Orch->>Guard: Submit votes from agent accounts
     Guard-->>UI: State visible through RPC polling
     alt At least 2 approvals
         Owner->>Guard: executeTransaction(txId)
@@ -166,7 +157,7 @@ sequenceDiagram
     else At least 2 rejections
         Guard->>Guard: mark rejected
     else Fewer than 2 decisive votes
-        Note over Guard: Intent remains pending indefinitely
+        Note right of Guard: Intent remains pending indefinitely
     end
 ```
 
@@ -179,8 +170,8 @@ counts.
 stateDiagram-v2
     [*] --> Pending: owner submits
     Pending --> Pending: no quorum
-    Pending --> Executable: approvalCount >= 2
-    Pending --> Rejected: rejectionCount >= 2
+    Pending --> Executable: two or more approvals
+    Pending --> Rejected: two or more rejections
     Executable --> Executed: owner executes and target succeeds
     Executable --> Executable: target call reverts
     Rejected --> [*]
