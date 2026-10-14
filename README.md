@@ -5,12 +5,11 @@
 <h1 align="center">HYDRA</h1>
 
 <p align="center">
-  <strong>An AI-assisted 2-of-3 transaction guard for Monad.</strong>
+  <strong>Three AI guardians. One on-chain quorum. No execution without consensus.</strong>
 </p>
 
 <p align="center">
-  Three independent agents inspect a transaction, publish their decisions on-chain,
-  and let the wallet owner execute only after a quorum approves.
+  An AI-native transaction security layer built on Monad.
 </p>
 
 <p align="center">
@@ -20,8 +19,42 @@
   <a href="#security-posture">Security posture</a>
 </p>
 
+> **A wallet should not execute first and explain later. HYDRA evaluates first,
+> reaches consensus on-chain, and only then unlocks execution.**
 
-## Why HYDRA exists
+HYDRA transforms transaction approval from a single wallet click into a
+programmable security process. Every submitted intent is examined by three
+specialized agents—**Security**, **Risk**, and **Portfolio**—before funds are
+allowed to move.
+
+Each agent analyzes the transaction independently, signs its own decision, and
+publishes that vote on-chain. The `HydraGuard` smart contract accepts exactly one
+vote from each configured agent and requires a **2-of-3 quorum**. Two approvals
+unlock execution. Two rejections permanently block the intent. Neither the
+frontend nor the backend can bypass those rules.
+
+This creates a clear division of power:
+
+- **AI evaluates** the target, transfer risk, and portfolio impact.
+- **Independent agent accounts attest** to their decisions with signed transactions.
+- **Solidity enforces** identity, vote uniqueness, quorum, and execution safety.
+- **The owner retains final control** by explicitly executing an approved intent.
+- **The chain preserves the evidence**—decision, reason, score, timestamp, and result.
+
+The result is more than an AI prompt attached to a wallet. HYDRA is a transparent
+authorization architecture where off-chain intelligence produces recommendations
+and deterministic on-chain rules decide whether execution is possible.
+
+| Core property | HYDRA model |
+| --- | --- |
+| Authorization | 2-of-3 agent quorum enforced by `HydraGuard` |
+| Decision engines | Security, Risk, and Portfolio agents |
+| Evidence | Signed votes and human-readable reasons stored on-chain |
+| Execution | Explicitly triggered by the owner after approval |
+| Failure outcome | Two rejections make the intent non-executable |
+| Runtime design | Concurrent analysis with independently submitted votes |
+
+## From blind signing to policy-enforced execution
 
 Most wallets ask a user one question: _did you sign?_ HYDRA adds a second layer:
 _does this transaction satisfy the wallet's policy?_
