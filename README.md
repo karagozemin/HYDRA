@@ -20,9 +20,6 @@
   <a href="#security-posture">Security posture</a>
 </p>
 
-> [!IMPORTANT]
-> HYDRA is a testnet prototype. It has not been audited and must not be used to
-> protect production assets.
 
 ## Why HYDRA exists
 
