@@ -1,164 +1,335 @@
 <p align="center">
-  <img src="hydra.png" alt="HYDRA Logo" width="120" />
+  <img src="hydra.png" alt="HYDRA" width="128" />
 </p>
 
 <h1 align="center">HYDRA</h1>
-<p align="center"><strong>Parallel AI Agent Multisig Wallet on Monad</strong></p>
 
-> **Cut one head. Three more protect your wallet.**
+<p align="center">
+  <strong>An AI-assisted 2-of-3 transaction guard for Monad.</strong>
+</p>
 
----
+<p align="center">
+  Three independent agents inspect a transaction, publish their decisions on-chain,
+  and let the wallet owner execute only after a quorum approves.
+</p>
 
-## What is HYDRA?
+<p align="center">
+  <a href="#how-it-works">How it works</a> ·
+  <a href="#quick-start">Quick start</a> ·
+  <a href="ARCHITECTURE.md">Architecture</a> ·
+  <a href="#security-posture">Security posture</a>
+</p>
 
-HYDRA is a smart wallet where **3 AI agents** replace human multisig signers. When you submit a transaction, each agent independently analyzes it and casts an on-chain vote. **2-of-3 must approve** before funds can move.
+> [!IMPORTANT]
+> HYDRA is a testnet prototype. It has not been audited and must not be used to
+> protect production assets.
 
-On Monad's parallel EVM, all 3 votes can land in the **same block** — each agent writes to an independent storage slot, so there's zero contention.
+## Why HYDRA exists
 
-## How It Works
+Most wallets ask a user one question: _did you sign?_ HYDRA adds a second layer:
+_does this transaction satisfy the wallet's policy?_
 
+The current prototype expresses that policy through three specialized agents:
+
+| Agent | Deterministic checks | AI-assisted review |
+| --- | --- | --- |
+| Security | Two-address demo blacklist | Scam, phishing, and suspicious-call reasoning |
+| Risk | Static value ceiling and selected function selectors | Transaction and DeFi risk reasoning |
+| Portfolio | Native-balance concentration threshold | Position-size and concentration reasoning |
+
+Every vote is an on-chain transaction. The Solidity contract—not the UI or the
+LLM—enforces agent identity, one vote per agent, and the 2-of-3 execution
+threshold.
+
+## How it works
+
+```mermaid
+flowchart LR
+    Owner[Wallet owner] -->|1. submit intent| Guard[HydraGuard]
+    Guard -->|2. event| Orchestrator[Orchestrator]
+    Orchestrator -->|3. analyze concurrently| Agents[Security · Risk · Portfolio]
+    Agents -->|4. signed votes| Guard
+    Guard -->|5. quorum reached| Owner
+    Owner -->|6. execute| Target[Target address or contract]
 ```
-User submits tx → Contract emits event → 3 AI agents analyze in parallel
-                                          ├── Security Agent (scam detection)
-                                          ├── Risk Agent (value & risk analysis)
-                                          └── Portfolio Agent (balance impact)
 
-3 votes submitted to contract → 2/3 approve? → Owner executes transfer
-                               → 2/3 reject?  → Transaction blocked
+1. The owner submits `to`, `value`, and optional calldata to `HydraGuard`.
+2. The contract stores the intent and emits `TransactionSubmitted`.
+3. The backend runs all three analyses concurrently with `Promise.all`.
+4. Three independently funded agent accounts submit `agentVote(...)` calls.
+5. Two rejections permanently block the intent; two approvals make it executable.
+6. The owner explicitly executes an approved intent.
+
+HYDRA separates **analysis** from **enforcement**: agents can recommend, but only
+the contract can establish quorum and release funds.
+
+For storage layout, trust boundaries, state transitions, failure behavior, and
+known implementation gaps, read the **[complete architecture guide](ARCHITECTURE.md)**.
+
+## What is real in this prototype
+
+- On-chain transaction intents, votes, quorum checks, and execution.
+- Three distinct signing accounts with isolated nonces.
+- Concurrent agent analysis and concurrent vote broadcasting on the approval path.
+- A real native-balance read in the Portfolio Agent.
+- Deterministic rejection scenarios for repeatable demos.
+- A frontend that reads contract state rather than trusting backend output.
+- A small status API for orchestrator health and recent in-memory activity.
+
+## What is deliberately limited
+
+- AI analysis is prompt-based; agents do not fetch bytecode, simulate calls, or
+  consult a live threat-intelligence feed.
+- If GROQ fails, the current demo fallback approves. This is fail-open behavior
+  and is unsuitable for production.
+- `TransactionSubmitted` does not currently include calldata, so the orchestrator
+  receives `0x` for event-driven analysis. See the architecture guide for the
+  recommended correction.
+- Vote transactions may land in the same block, but same-block inclusion does not
+  prove parallel EVM execution. Vote tally counters are shared storage writes.
+- The Portfolio Agent compares against `OWNER_ADDRESS` native balance, not the
+  HydraGuard contract balance or a complete token/DeFi portfolio.
+- There is no on-chain expiry, cancellation, agent rotation, or upgrade mechanism.
+
+## Repository map
+
+```text
+hydra/
+├── contracts/               # Solidity contract, deployment script, Foundry tests
+│   ├── src/HydraGuard.sol
+│   ├── script/Deploy.s.sol
+│   └── test/HydraGuard.t.sol
+├── backend/                 # Event watcher, agents, vote submission, status API
+│   ├── agents/
+│   ├── lib/
+│   ├── index.js
+│   └── orchestrator.js
+├── frontend/                # Next.js dashboard and wallet experience
+│   ├── app/
+│   ├── components/
+│   ├── hooks/
+│   └── lib/
+├── ARCHITECTURE.md          # Technical source of truth
+└── README.md
 ```
 
-1. **Owner** calls `submitTransaction(to, value, data)` on the HydraGuard contract
-2. **Backend orchestrator** catches the `TransactionSubmitted` event
-3. **Three agents** run in parallel (`Promise.all`), each combining hardcoded safety checks with a GROQ Llama 3.3 70B prompt
-4. **Votes** are submitted as on-chain transactions via `agentVote()`
-5. **Contract** auto-rejects at 2+ rejections, or waits for owner to execute after 2+ approvals
-
-## The Three Agents
-
-| Agent | What It Actually Does |
-|-------|----------------------|
-| **Security Agent** | Checks a hardcoded scam blacklist (2 addresses). If not blacklisted, sends tx details to Llama 3.3 70B asking about scam patterns, malicious calldata, and suspicious bytecode. Does NOT query external threat databases or fetch contract bytecode. |
-| **Risk Agent** | Checks scam blacklist. Auto-rejects transfers >1000 MON. Flags risky function selectors (`approve()`, `withdraw()`). Sends remaining txs to LLM for DeFi risk assessment. Does NOT check actual liquidity pools or mempool. |
-| **Portfolio Agent** | Checks scam blacklist. **Fetches real on-chain wallet balance** via `getBalance()`. Auto-rejects if tx is >50% of portfolio. Sends balance context to LLM. "Portfolio" means native MON balance only — no tokens or DeFi positions. |
-
-Each agent returns: `{ approve: bool, reason: string, risk_score: 0-100 }`
-
-## Why Monad?
-
-The contract stores votes in `mapping(uint256 => mapping(address => Vote))`. Each agent writes to a different key (`votes[txId][agent1]` vs `votes[txId][agent2]` vs `votes[txId][agent3]`), which maps to independent storage slots. Monad's parallel EVM can execute these without contention — all 3 votes can land in a single block.
-
-| | Sequential EVM | Monad (Parallel EVM) |
-|---|---|---|
-| 3 agent votes | 3 separate blocks | Can fit in **1 block** |
-| Storage access | Sequential | Parallel (independent slots) |
-
-## Tech Stack
+## Tech stack
 
 | Layer | Technology |
-|-------|-----------|
-| Smart Contract | Solidity 0.8.24, Foundry |
-| Backend | Node.js (ESM), viem v2, groq-sdk |
-| Frontend | Next.js 14, wagmi v2, RainbowKit, Tailwind CSS |
-| AI Model | GROQ Llama 3.3 70B Versatile |
-| Network | Monad Testnet (Chain ID: 10143) |
+| --- | --- |
+| Contract | Solidity 0.8.24, Foundry |
+| Network configuration | Monad Testnet, chain ID `10143` |
+| Backend | Node.js ESM, viem, GROQ SDK |
+| Frontend | Next.js 14 App Router, React 18, TypeScript |
+| Wallet layer | wagmi, viem, RainbowKit |
+| Styling | Tailwind CSS |
 
-## Quick Start
+## Quick start
 
 ### Prerequisites
-- Node.js 18+
-- Foundry (`curl -L https://foundry.paradigm.xyz | bash`)
-- MetaMask with Monad Testnet
 
-### 1. Clone & Install
+- Node.js 18 or newer
+- npm
+- [Foundry](https://book.getfoundry.sh/getting-started/installation)
+- Four testnet accounts: one owner and three agents
+- Testnet MON for deployment and agent gas
+- A WalletConnect project ID
+- A GROQ API key, unless mock mode is enabled
+
+### 1. Install dependencies
 
 ```bash
-git clone <repo-url>
-cd HYDRA
+git clone <repository-url>
+cd hydra
 
 cd contracts && forge install && cd ..
-cd backend && npm install && cd ..
-cd frontend && npm install && cd ..
+cd backend && npm ci && cd ..
+cd frontend && npm ci && cd ..
 ```
 
-### 2. Deploy Contract
+### 2. Test the contract
 
 ```bash
 cd contracts
-forge create src/HydraGuard.sol:HydraGuard \
-  --rpc-url https://testnet-rpc.monad.xyz \
-  --private-key <DEPLOYER_KEY> \
-  --broadcast \
-  --constructor-args <OWNER_ADDR> <AGENT1_ADDR> <AGENT2_ADDR> <AGENT3_ADDR>
+forge test -vv
+cd ..
 ```
 
-### 3. Configure
+### 3. Deploy HydraGuard
 
-**Backend** (`backend/.env`):
-```
-AGENT1_KEY=<security-agent-private-key>
-AGENT2_KEY=<risk-agent-private-key>
-AGENT3_KEY=<portfolio-agent-private-key>
-CONTRACT_ADDRESS=<deployed-address>
-OWNER_ADDRESS=<owner-address>
-GROQ_API_KEY=<groq-api-key>
-```
+Create `contracts/.env` or export the following values in your shell:
 
-**Frontend** (`frontend/.env.local`):
-```
-NEXT_PUBLIC_WALLETCONNECT_ID=<walletconnect-project-id>
-NEXT_PUBLIC_CONTRACT_ADDRESS=<deployed-address>
-NEXT_PUBLIC_AGENT1_ADDRESS=<agent1-public-address>
-NEXT_PUBLIC_AGENT2_ADDRESS=<agent2-public-address>
-NEXT_PUBLIC_AGENT3_ADDRESS=<agent3-public-address>
+```dotenv
+DEPLOYER_KEY=<deployer-private-key-as-uint>
+OWNER_ADDRESS=0x...
+AGENT1_ADDRESS=0x...
+AGENT2_ADDRESS=0x...
+AGENT3_ADDRESS=0x...
 ```
 
-### 4. Run
+Deploy with the included Foundry script:
 
 ```bash
-# Fund contract with MON (for transfers) and each agent wallet with ~0.5 MON (for gas)
+cd contracts
+source .env
+forge script script/Deploy.s.sol:Deploy \
+  --rpc-url monad_testnet \
+  --broadcast
+cd ..
+```
 
-# Terminal 1
-cd backend && npm start
+Record the deployed contract address. Fund that address with enough MON to cover
+the transfers used in your demo, and fund each agent account for gas.
 
-# Terminal 2
+### 4. Configure the backend
+
+```bash
+cp backend/.env.example backend/.env
+```
+
+```dotenv
+AGENT1_KEY=0x...
+AGENT2_KEY=0x...
+AGENT3_KEY=0x...
+CONTRACT_ADDRESS=0x...
+OWNER_ADDRESS=0x...
+GROQ_API_KEY=gsk_...
+USE_MOCK_AGENTS=false
+
+# Optional
+RPC_URL=https://testnet-rpc.monad.xyz
+PORT=3001
+```
+
+Set `USE_MOCK_AGENTS=true` for deterministic demo responses without GROQ. The
+blacklist and agent-specific deterministic checks still run before mock mode.
+
+### 5. Configure the frontend
+
+Create `frontend/.env.local`:
+
+```dotenv
+NEXT_PUBLIC_WALLETCONNECT_ID=...
+NEXT_PUBLIC_CONTRACT_ADDRESS=0x...
+NEXT_PUBLIC_AGENT1_ADDRESS=0x...
+NEXT_PUBLIC_AGENT2_ADDRESS=0x...
+NEXT_PUBLIC_AGENT3_ADDRESS=0x...
+NEXT_PUBLIC_BACKEND_URL=http://localhost:3001
+```
+
+The three public agent addresses must correspond exactly to the three private keys
+used by the backend and the addresses passed to the contract constructor.
+
+### 6. Run the stack
+
+Terminal 1:
+
+```bash
+cd backend
+npm start
+```
+
+Terminal 2:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000), connect the owner wallet,
+and switch to the configured Monad testnet.
+
+### 7. Confirm health
+
+```bash
+curl http://localhost:3001/health
+curl http://localhost:3001/status
+```
+
+The backend must remain online to observe new submission events and publish votes.
+It does not replay missed events after a restart.
+
+## Demo paths
+
+| Scenario | Input | Expected behavior |
+| --- | --- | --- |
+| Small native transfer | Valid address and a small amount | Quorum normally approves; owner can execute |
+| Known demo scam | `0x000000000000000000000000000000000000dEaD` | All deterministic blacklist checks reject |
+| Large transfer | More than `1000 MON` | Risk Agent rejects |
+| Concentrated transfer | More than 50% of configured owner balance | Portfolio Agent rejects |
+| Insufficient contract funds | Approved amount exceeds HydraGuard balance | Execution reverts; intent remains unexecuted |
+
+## Useful commands
+
+```bash
+# Contract tests
+cd contracts && forge test -vv
+
+# Frontend development
 cd frontend && npm run dev
+
+# Frontend production check
+cd frontend && npm run build
+
+# Backend with file watching
+cd backend && npm run dev
 ```
 
-Open `http://localhost:3000`, connect wallet, submit a transaction.
+## Backend status API
 
-## Demo Scenarios
+| Route | Purpose |
+| --- | --- |
+| `GET /health` | Process status and uptime |
+| `GET /status` | Contract address, uptime, retained activity count, and last 20 entries |
 
-| Scenario | How to trigger | Expected result |
-|----------|---------------|-----------------|
-| Safe transfer | Any valid address, small amount | 2-3/3 approved, execute button appears |
-| Scam address | Send to `0x000...dEaD` | 3/3 rejected, "HYDRA protected your wallet" |
-| Large transfer | Any address, >1000 MON | Risk Agent rejects |
-| Portfolio drain | Any address, >50% of balance | Portfolio Agent rejects |
+Activity is held in memory, capped at 100 entries, and reset when the backend
+restarts. The `totalProcessed` field is therefore a retained-entry count, not a
+lifetime counter. CORS currently allows every origin, which is convenient for
+local demos but should be restricted for a deployment.
 
-## Architecture
+## Security posture
 
-For a complete technical deep-dive — how each agent works, what the contract does and doesn't do, honest limitations, and the full project structure — see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+The contract enforces the narrow mechanics it implements, but the complete system
+also trusts the backend host, agent keys, RPC endpoint, configured addresses, and
+model output. Before any production use, at minimum:
 
-## Project Structure
+1. Make every external-analysis failure fail closed or require manual review.
+2. Recover calldata from contract state or include it in the submission event.
+3. Add durable event replay, idempotency, receipt reconciliation, and retries.
+4. Redesign vote tallying if conflict-free parallel writes are a core requirement.
+5. Validate distinct agent addresses and add rotation/recovery procedures.
+6. Add transaction simulation, bytecode inspection, and live threat intelligence.
+7. Add expiry/cancellation and emergency controls.
+8. Upgrade vulnerable dependencies and commission an independent audit.
 
-```
-HYDRA/
-├── contracts/          # Solidity contract + Foundry tests
-├── backend/            # Event orchestrator + 3 AI agents
-├── frontend/           # Next.js dashboard + landing page
-└── ARCHITECTURE.md     # Full technical documentation
-```
+The detailed risk register and recommended target architecture are documented in
+**[ARCHITECTURE.md](ARCHITECTURE.md#security-and-reliability-register)**.
 
-## Contract Tests
+## Current verification
 
-```bash
-cd contracts && forge test
-```
+At the time of the latest repository review:
 
----
+- `forge test -vv`: **15 passed, 0 failed** across both Foundry suites.
+- `npm run build` in `frontend/`: **successful**, including type checking and lint.
+- Backend JavaScript syntax checks: **successful**.
 
-**Powered by [OverBlock](https://x.com/OverBlock_) | Created by [Kaptan](https://x.com/kaptan_web3)**
+These checks validate the current build and tested behavior; they are not a
+security audit.
+
+## Documentation
+
+- **[Architecture](ARCHITECTURE.md)** — system boundaries, lifecycle, state model,
+  contract semantics, backend behavior, failure modes, and evolution path.
+- [`contracts/README.md`](contracts/README.md) — Foundry workspace reference.
+- [`frontend/README.md`](frontend/README.md) — frontend workspace notes.
 
 ## License
 
 MIT
+
+---
+
+<p align="center">
+  Powered by <a href="https://x.com/OverBlock_">OverBlock</a> ·
+  Created by <a href="https://x.com/kaptan_web3">Kaptan</a>
+</p>

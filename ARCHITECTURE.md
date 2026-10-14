@@ -1,351 +1,854 @@
 # HYDRA Architecture
 
-> Honest, complete technical documentation of how HYDRA works.
+This document is the technical source of truth for the current HYDRA repository.
+It explains what the system does today, where its trust boundaries are, which
+claims the implementation can support, and what must change before production use.
 
----
+> [!NOTE]
+> HYDRA is a testnet prototype, not an audited custody product. This document
+> describes repository behavior; it does not make a security guarantee.
 
-## Overview
+## Contents
 
-HYDRA is a multisig wallet where 3 AI agents replace human signers. When the wallet owner submits a transaction, 3 independent AI agents analyze it in parallel and vote on-chain. If 2-of-3 approve, the transaction can be executed. Otherwise, it's blocked.
+- [System at a glance](#system-at-a-glance)
+- [Trust model](#trust-model)
+- [Transaction lifecycle](#transaction-lifecycle)
+- [On-chain architecture](#on-chain-architecture)
+- [Backend architecture](#backend-architecture)
+- [Agent behavior](#agent-behavior)
+- [Frontend architecture](#frontend-architecture)
+- [Parallelism: precise claim](#parallelism-precise-claim)
+- [Deployment and configuration](#deployment-and-configuration)
+- [Operations and observability](#operations-and-observability)
+- [Security and reliability register](#security-and-reliability-register)
+- [Testing strategy](#testing-strategy)
+- [Recommended evolution path](#recommended-evolution-path)
 
-The system has three layers:
+## System at a glance
 
-1. **Smart Contract** (Solidity on Monad) — holds funds, records votes, enforces 2-of-3 threshold
-2. **Backend Orchestrator** (Node.js) — listens for on-chain events, runs 3 AI agents, submits votes
-3. **Frontend** (Next.js) — wallet connection, transaction submission, real-time vote display
+HYDRA is an owner-controlled smart wallet with an AI-assisted authorization gate.
+The owner proposes and executes transactions. Three configured agent accounts
+review each proposal and cast on-chain votes. The contract requires two approvals
+before execution and permanently rejects a proposal after two rejections.
 
----
+| Layer | Responsibility | Authority |
+| --- | --- | --- |
+| `HydraGuard` contract | Store intents and votes, enforce identity and quorum, execute calls | Final on-chain authority |
+| Backend orchestrator | Observe submissions, run analyses, sign and broadcast votes | Controls the three configured agent keys |
+| Next.js frontend | Connect the owner, submit intents, read state, request execution | Convenience client; not trusted for enforcement |
 
-## Transaction Lifecycle
+### System boundary
 
+```mermaid
+flowchart TB
+    subgraph Browser["Owner browser — presentation layer"]
+        UI["Next.js dashboard"]
+        Wallet["Owner wallet"]
+    end
+
+    subgraph Service["Backend host — trusted operational boundary"]
+        API["Health / status API"]
+        ORCH["Event orchestrator"]
+        A1["Security Agent"]
+        A2["Risk Agent"]
+        A3["Portfolio Agent"]
+        Keys["3 agent keys"]
+    end
+
+    subgraph External["External dependencies"]
+        RPC["Monad RPC"]
+        LLM["GROQ API"]
+    end
+
+    subgraph Chain["Monad"]
+        Guard["HydraGuard"]
+        Target["Target address / contract"]
+    end
+
+    UI --> Wallet
+    Wallet -->|submit / execute| Guard
+    UI -->|contract reads| RPC
+    UI -.->|optional status| API
+    RPC <--> Guard
+    Guard -->|event logs| RPC
+    RPC --> ORCH
+    ORCH --> A1
+    ORCH --> A2
+    ORCH --> A3
+    A1 <--> LLM
+    A2 <--> LLM
+    A3 <--> LLM
+    A1 --> Keys
+    A2 --> Keys
+    A3 --> Keys
+    Keys -->|signed votes| Guard
+    Guard -->|low-level call| Target
 ```
-1. Owner submits tx via frontend → calls submitTransaction(to, value, data) on contract
-2. Contract emits TransactionSubmitted event
-3. Backend orchestrator catches the event
-4. Orchestrator runs 3 agents in parallel (Promise.all)
-   - Each agent: hardcoded checks + GROQ Llama 3.3 70B prompt
-   - Each returns: { approve: bool, reason: string, risk_score: 0-100 }
-5. Orchestrator submits 3 agentVote() transactions to the contract
-   - If 2+ rejections: votes submitted sequentially (early exit on resolve)
-   - If majority approve: votes submitted in parallel (can land in same Monad block)
-6. Contract counts votes, auto-rejects if 2+ rejections via _tryResolve()
-7. Frontend polls contract state, displays votes with staggered animation
-8. If 2/3 approved: owner can call executeTransaction() to transfer funds
+
+The key separation is between **recommendation** and **enforcement**: agent logic
+runs off-chain, while identity, quorum, and execution rules live in Solidity.
+
+## Trust model
+
+### What the contract guarantees
+
+Assuming correct EVM execution and uncompromised keys, the contract enforces:
+
+- Only the configured owner can submit or execute a transaction.
+- Only a configured agent address can vote.
+- Each configured address can vote once per transaction ID.
+- Risk scores above 100 are rejected.
+- Execution requires at least two recorded approvals.
+- Two recorded rejections permanently block an intent.
+- A successfully executed intent cannot execute again.
+- If the external target call reverts, the whole execution reverts and the intent
+  remains executable.
+
+### What the complete system additionally trusts
+
+- The backend host must protect all three agent private keys.
+- Backend, frontend, and constructor addresses must match.
+- The RPC must deliver timely logs, reads, and receipts.
+- The orchestrator must be online when submissions arrive.
+- GROQ output and deterministic rules must reflect the intended policy.
+- The owner must verify the network, target, value, and action before signing.
+
+All three agent keys currently live in one process. The agents are logically
+specialized, but they are not independent infrastructure trust domains. A backend
+host compromise can compromise the complete voting quorum.
+
+### Current non-goals
+
+- Multi-user custody or human multisig compatibility
+- Agent rotation, key recovery, or on-chain governance
+- Transaction expiry or cancellation
+- Upgradeability or gas sponsorship
+- Full portfolio accounting
+- Transaction simulation
+- Production-grade threat intelligence
+
+## Transaction lifecycle
+
+### End-to-end sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Owner
+    participant UI as Next.js UI
+    participant Guard as HydraGuard
+    participant Orch as Orchestrator
+    participant Agents as 3 Agents
+    participant Groq as GROQ
+
+    Owner->>UI: Enter target and native amount
+    UI->>Guard: submitTransaction(to, value, data)
+    Guard-->>Orch: TransactionSubmitted(txId, to, value, owner)
+    Note over Guard,Orch: Current event omits data; backend defaults it to 0x
+    par Security analysis
+        Orch->>Agents: securityAnalyze(...)
+        Agents->>Groq: JSON-constrained prompt
+        Groq-->>Agents: decision
+    and Risk analysis
+        Orch->>Agents: riskAnalyze(...)
+        Agents->>Groq: JSON-constrained prompt
+        Groq-->>Agents: decision
+    and Portfolio analysis
+        Orch->>Agents: portfolioAnalyze(...)
+        Agents->>Groq: JSON-constrained prompt
+        Groq-->>Agents: decision
+    end
+    Orch->>Guard: agentVote(...) from agent account(s)
+    Guard-->>UI: State visible through RPC polling
+    alt At least 2 approvals
+        Owner->>Guard: executeTransaction(txId)
+        Guard->>Guard: mark executed and call target
+    else At least 2 rejections
+        Guard->>Guard: mark rejected
+    else Fewer than 2 decisive votes
+        Note over Guard: Intent remains pending indefinitely
+    end
 ```
 
----
+### Derived transaction states
 
-## Smart Contract: HydraGuard.sol
+The contract does not store a state enum. State is derived from booleans and vote
+counts.
 
-**Language:** Solidity 0.8.24
-**Framework:** Foundry
-**Deployed on:** Monad Testnet (Chain ID: 10143)
+```mermaid
+stateDiagram-v2
+    [*] --> Pending: owner submits
+    Pending --> Pending: no quorum
+    Pending --> Executable: approvalCount >= 2
+    Pending --> Rejected: rejectionCount >= 2
+    Executable --> Executed: owner executes and target succeeds
+    Executable --> Executable: target call reverts
+    Rejected --> [*]
+    Executed --> [*]
+```
 
-### Storage Layout
+There is no terminal state for an abandoned pending intent. Missing votes leave it
+pending forever.
+
+### Approval path
+
+1. All three analyses finish before vote submission starts.
+2. If fewer than two analyses reject, all three votes are broadcast concurrently
+   with `Promise.all`.
+3. Each wallet has an independent account and nonce stream.
+4. After two approvals, `canExecute(txId)` becomes true.
+5. The owner sends a separate execution transaction.
+
+The third agent may still vote after approval quorum because quorum does not mark
+the intent resolved.
+
+### Rejection path
+
+1. If two or more analyses reject, votes are submitted sequentially.
+2. The orchestrator waits for each receipt before sending the next vote.
+3. The second recorded rejection sets `rejected = true`.
+4. Later votes revert through `notExecuted`.
+
+This reduces expected reverts, but current error handling treats every submission
+error as resolution. A transient RPC error can stop the loop prematurely.
+
+## On-chain architecture
+
+### Contract role
+
+`contracts/src/HydraGuard.sol` is both a native-token vault and an intent registry
+with a 2-of-3 authorization gate.
+
+After quorum, execution uses:
 
 ```solidity
-address public owner;                          // wallet owner, can submit + execute
-address[3] public agents;                      // 3 agent wallet addresses
-uint256 public txCount;                        // incremental transaction counter
-uint256 public constant THRESHOLD = 2;         // 2-of-3 majority
-
-mapping(uint256 => Transaction) public transactions;           // txId → tx data
-mapping(uint256 => mapping(address => Vote)) public votes;     // txId → agent → vote
-mapping(address => uint256) public agentReputation;            // agent → approval count
+(bool success,) = txn.to.call{value: txn.value}(txn.data);
+require(success, "HydraGuard: execution failed");
 ```
 
-### Why the Storage Layout Matters for Monad
+This supports native transfers and arbitrary contract calls. The current frontend
+submits native transfers with `data = 0x`, but the contract interface is more
+general.
 
-`votes[txId][agent1]`, `votes[txId][agent2]`, `votes[txId][agent3]` map to **different storage slots**. On Monad's parallel EVM, transactions that touch different storage slots execute simultaneously without contention. This means all 3 agent votes can theoretically land in the same block.
+### Roles
 
-**Important caveat:** This parallelism depends on Monad's scheduler. The votes are submitted as 3 separate transactions from 3 different wallets — whether they actually land in the same block depends on network conditions, gas, and block timing. In practice during testing, they often do land in the same block, but it's not guaranteed by the application logic.
+| Role | Stored as | Capabilities |
+| --- | --- | --- |
+| Owner | `address public owner` | Submit intents and execute approved intents |
+| Agent | `address[3] public agents` and `isAgent` | Vote once per intent |
+| Target | Per-transaction `to` | Receive native value and/or calldata |
 
-### Core Functions
+The constructor rejects zero addresses but does not require the three agents to be
+distinct. Duplicate addresses can make quorum unreachable.
 
-| Function | Access | What it does |
-|----------|--------|-------------|
-| `submitTransaction(to, value, data)` | Owner only | Creates a new tx, increments txCount, emits event |
-| `agentVote(txId, approve, reason, riskScore)` | Agent only | Records vote, increments approval/rejection count, calls `_tryResolve` |
-| `executeTransaction(txId)` | Owner only | Transfers funds via low-level `call{value}(data)`, requires 2+ approvals |
-| `_tryResolve(txId)` | Internal | If `rejectionCount > 1`, marks tx as rejected (early exit) |
+### Storage model
 
-### What the Contract Does NOT Do
+```solidity
+address public owner;
+address[3] public agents;
+uint256 public txCount;
+uint256 public constant THRESHOLD = 2;
 
-- No timeouts — a transaction with <3 votes stays pending forever on-chain
-- No gas refunds or compensation for agents
-- No upgradeability — contract is immutable once deployed
-- No token transfers — only native MON (via `msg.value`)
-- `agentReputation` is just a counter that increments on approvals — it has no effect on voting power or behavior
-
-### Tests
-
-`contracts/test/HydraGuard.t.sol` — 197 lines covering:
-- Submit/vote/execute happy path
-- Double-vote prevention
-- Auto-rejection at 2+ rejections
-- Access control (onlyOwner, onlyAgent)
-- Threshold enforcement
-
----
-
-## Backend: Orchestrator + 3 Agents
-
-**Runtime:** Node.js (ESM)
-**Dependencies:** viem v2, groq-sdk, dotenv
-
-### Orchestrator (`orchestrator.js`)
-
-The orchestrator is a long-running Node.js process that:
-
-1. Creates a viem `publicClient` and 3 `walletClient`s (one per agent, each with its own private key)
-2. Watches for `TransactionSubmitted` events on the contract (polling every 2 seconds)
-3. When an event fires, runs all 3 agent analysis functions via `Promise.all`
-4. Submits votes to the contract
-
-**Vote submission strategy:**
-- If 2+ agents rejected → submits votes **sequentially**. This is because each rejection triggers `_tryResolve()` which can mark the tx as rejected, causing subsequent votes to revert. Sequential submission lets the orchestrator skip remaining votes after resolution.
-- If majority approved → submits votes **in parallel**. Approval votes don't trigger resolution, so there's no revert risk. Parallel submission means all 3 vote transactions are broadcast at once, giving them the best chance of landing in the same Monad block.
-
-### Agent Analysis Pipeline
-
-Each agent follows the same pattern:
-
-```
-1. Check hardcoded scam blacklist (2 addresses: 0x...dead variants)
-   → If match: return reject immediately, no LLM call
-
-2. Agent-specific fast-path checks (varies per agent)
-   → If triggered: return result immediately, no LLM call
-
-3. If USE_MOCK_AGENTS=true: return hardcoded safe response
-   → For demo reliability when GROQ is unavailable
-
-4. Send prompt to GROQ Llama 3.3 70B (temperature=0.1, max_tokens=150)
-   → Response format enforced as JSON
-   → Parse response: { approve, reason, risk_score }
-
-5. On GROQ error: fall back to hardcoded safe response (approve=true)
+mapping(uint256 => Transaction) public transactions;
+mapping(uint256 => mapping(address => Vote)) public votes;
+mapping(address => uint256) public agentReputation;
+mapping(address => bool) public isAgent;
 ```
 
-**The fallback behavior is worth noting:** if GROQ fails, all 3 agents default to **approving** the transaction. This is a design choice for demo reliability — in production, failing open like this would be a security concern.
+`Transaction` stores:
 
-### Security Agent (`securityAgent.js`)
+| Field | Meaning |
+| --- | --- |
+| `to` | Execution target |
+| `value` | Native MON forwarded during execution |
+| `data` | Arbitrary calldata forwarded during execution |
+| `executed` | Successful execution marker |
+| `rejected` | Permanent rejection marker |
+| `approvalCount` | Recorded approval total |
+| `rejectionCount` | Recorded rejection total |
+| `submittedAt` | Submission block timestamp |
+| `submittedBy` | Owner that created the intent |
 
-**Hardcoded checks:**
-- Scam address blacklist (2 addresses)
+`Vote` stores:
 
-**No other fast-path checks.** Beyond the blacklist, everything goes to the LLM.
+| Field | Meaning |
+| --- | --- |
+| `hasVoted` | Double-vote guard |
+| `approve` | Agent decision |
+| `reason` | On-chain human-readable explanation |
+| `riskScore` | Integer from 0 to 100 |
+| `timestamp` | Vote block timestamp |
 
-**LLM prompt asks about:**
-- Known scam/phishing/exploit association
-- Malicious calldata (e.g., `approve` to unknown spender)
-- Suspicious bytecode patterns
+Reasons are permanently public. They must never contain secrets, credentials,
+private user context, or sensitive model traces.
 
-**What it does NOT do:**
-- Does not actually fetch or analyze contract bytecode
-- Does not query any external scam databases or APIs
-- Does not verify contracts on a block explorer
-- The LLM is making judgments based only on the address string, value, and calldata provided in the prompt
+### Contract interface
 
-### Risk Agent (`riskAgent.js`)
+| Function | Caller | Effect |
+| --- | --- | --- |
+| `submitTransaction(to, value, data)` | Owner | Creates intent and increments `txCount` |
+| `agentVote(txId, approve, reason, riskScore)` | Agent | Stores vote and updates tallies |
+| `executeTransaction(txId)` | Owner | Executes an approved intent |
+| `getTransaction(txId)` | Anyone | Returns target, value, flags, and counts |
+| `getVote(txId, agent)` | Anyone | Returns an agent's vote |
+| `getAgents()` | Anyone | Returns configured agents |
+| `canExecute(txId)` | Anyone | Returns derived execution eligibility |
 
-**Hardcoded checks:**
-- Scam address blacklist (same 2 addresses)
-- Value > 1000 MON → auto-reject
-- Calldata starts with `0x095ea7b3` (approve) or `0x2e1a7d4d` (withdraw) → auto-reject
+### Events
 
-**LLM prompt asks about:**
-- Whether the value is reasonable for DeFi operations
-- Low-liquidity pool interaction
-- MEV/sandwich attack risk
+| Event | Main consumer | Notes |
+| --- | --- | --- |
+| `TransactionSubmitted` | Orchestrator | Carries ID, target, value, submitter; omits calldata |
+| `AgentVoted` | UI and indexers | Carries public vote result |
+| `TransactionExecuted` | UI and indexers | Marks successful execution |
+| `TransactionRejected` | UI and indexers | Emitted when the second rejection lands |
 
-**What it does NOT do:**
-- Does not check actual DEX liquidity or pool data
-- Does not simulate the transaction
-- Does not check mempool for sandwich attacks
-- Value threshold (1000 MON) is a static number, not relative to anything
+### Calldata visibility gap
 
-### Portfolio Agent (`portfolioAgent.js`)
+The contract stores `Transaction.data`, but the submission event omits it and the
+custom `getTransaction` view does not return it. The backend ABI exposes no other
+getter for the field.
 
-**This is the only agent that reads real on-chain data beyond the event payload.**
+The orchestrator evaluates `log.args.data || '0x'`, so normal event-driven
+analysis always receives `0x`. Risk selector checks and LLM calldata reasoning are
+therefore inactive.
 
-**On-chain check:**
-- Fetches the owner's wallet balance via `publicClient.getBalance()`
-- Calculates `positionPct = (txValue / walletBalance) * 100`
-- If positionPct > 50% → auto-reject
+Two direct corrections are possible:
 
-**LLM prompt includes:**
-- Real wallet balance and position percentage
-- Asks about concentration risk and diversification
+- add `bytes data` to `TransactionSubmitted`; or
+- add `getTransactionData(txId)` and read it before analysis.
 
-**What it does NOT do:**
-- Does not track token holdings, only native MON balance
-- Does not know about tokens, NFTs, or DeFi positions
-- "Portfolio" is just the native MON balance — not a full portfolio view
+The event approach simplifies indexing but increases log size. The view approach
+adds one RPC call per intent.
 
-### Shared Scam Blacklist
+### Value custody and execution
 
-All 3 agents check the same 2 hardcoded addresses:
+Submitting an intent does not deposit MON. HydraGuard must be funded separately
+through its payable `receive()` function. During execution:
+
+- value leaves HydraGuard, not the owner's externally owned account;
+- insufficient vault balance makes the call fail;
+- failure rolls back `executed = true`; and
+- the owner can retry after fixing the failure condition.
+
+### Reputation semantics
+
+`agentReputation[agent]` increments on every approval. It is an approval counter,
+not a correctness or accuracy score, and it has no effect on voting power.
+
+## Backend architecture
+
+### Process composition
+
+`backend/index.js` starts an HTTP status server and the blockchain event watcher
+in one Node.js process.
+
+`backend/lib/viemClient.js` creates:
+
+- one public client for reads, logs, and receipts; and
+- three wallet clients, one for each agent key.
+
+Separate accounts avoid nonce contention between agents. They do not remove
+on-chain storage conflicts.
+
+### Startup configuration
+
+Required values:
+
+- `AGENT1_KEY`
+- `AGENT2_KEY`
+- `AGENT3_KEY`
+- `CONTRACT_ADDRESS`
+- `OWNER_ADDRESS`
+
+`GROQ_API_KEY` is optional only in mock mode.
+
+Wallets are constructed during module import, before the friendly environment
+validation in `index.js`. A missing agent key may therefore throw before the
+intended validation message appears.
+
+### Event consumption
+
+The orchestrator polls `TransactionSubmitted` every two seconds. Per log, it:
+
+1. Extracts `txId`, `to`, and `value`.
+2. Defaults missing calldata to `0x`.
+3. Runs all analyses concurrently.
+4. Chooses parallel or sequential vote submission.
+5. Waits up to 15 seconds for each receipt.
+6. Appends a summary to a 100-entry in-memory activity log.
+
+There is no persistent cursor, backfill, queue, dead-letter store, or explicit
+reorg handling. The application does not replay events missed during downtime.
+
+### Vote submission
+
+Before broadcasting, the orchestrator:
+
+- clamps and rounds `risk_score` to 0–100;
+- truncates `reason` to 200 characters; and
+- approves only when `result.approve === true`.
+
+The current catch block maps all failures—resolved transaction, RPC timeout,
+insufficient gas, invalid configuration, or another error—to `resolved: true`.
+The sequential rejection loop stops when it sees that flag.
+
+Activity summaries are calculated from model decisions, not reconciled receipts.
+`/status` can therefore disagree with on-chain state.
+
+### Status API
+
+| Route | Response |
+| --- | --- |
+| `GET /health` | Process status and uptime |
+| `GET /status` | Uptime, contract, retained activity count, last 20 entries |
+| Other | JSON 404 |
+
+CORS allows every origin. Activity is capped at 100 process-local entries and
+disappears on restart, so `totalProcessed` is not a lifetime counter. The API is
+informational and never authorizes frontend actions.
+
+## Agent behavior
+
+All agents return:
+
+```json
+{
+  "approve": true,
+  "reason": "Short human-readable explanation",
+  "risk_score": 18
+}
 ```
+
+There is no shared runtime schema validator. JSON parsing is enforced, but field
+types and semantic consistency are only partially normalized before voting.
+
+### Common decision order
+
+1. Check the shared two-address demo blacklist.
+2. Run agent-specific deterministic checks.
+3. In mock mode, return a predefined safe response.
+4. Otherwise send a low-temperature, JSON-constrained prompt to GROQ.
+5. On model or parsing error, return the predefined safe response.
+
+Step 5 is demo-oriented fail-open behavior. A production engine should fail
+closed, abstain, or require explicit manual review.
+
+### Security Agent
+
+| Capability | Current implementation |
+| --- | --- |
+| Demo blacklist | Deterministic |
+| Scam association | LLM reasoning only |
+| Calldata review | Prompt-based, but receives `0x` through the current event path |
+| Bytecode inspection | Not implemented |
+| Contract verification | Not implemented despite demo response wording |
+| Threat-feed lookup | Not implemented |
+
+### Risk Agent
+
+Deterministic rejection rules:
+
+- target appears in the shared demo blacklist;
+- value exceeds `1000 MON`;
+- calldata begins with `0x095ea7b3`, the `approve` selector; or
+- calldata begins with `0x2e1a7d4d`, a common `withdraw` selector.
+
+The selector checks do not activate through the normal event path today. The agent
+does not simulate calls, inspect pool liquidity, or observe the mempool.
+
+### Portfolio Agent
+
+The agent fetches the native balance of `OWNER_ADDRESS` and calculates:
+
+```text
+positionPct = transactionValue / ownerNativeBalance × 100
+```
+
+It rejects values above 50%. This is a real RPC read but not a complete portfolio:
+
+- it measures the configured owner while execution spends HydraGuard's balance;
+- it excludes tokens, NFTs, LP positions, lending positions, and debt; and
+- if the balance read fails, analysis continues without reliable balance context.
+
+### Shared demo blacklist
+
+```text
 0x000000000000000000000000000000000000dead
 0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead
 ```
 
-These exist primarily for deterministic demo scenarios. There is no external scam database integration.
+This exists for deterministic demos. It is not a threat-intelligence database.
+
+## Frontend architecture
+
+### Composition
+
+```text
+RootLayout
+└── Providers
+    ├── WagmiProvider
+    ├── QueryClientProvider
+    └── RainbowKitProvider
+        └── Home
+            ├── ConnectWallet / WrongNetworkBanner
+            ├── TransactionForm
+            ├── AgentPanel
+            │   ├── 3 × AgentCard
+            │   └── ParallelProof
+            ├── TransactionHistory
+            ├── AgentReputation
+            └── OrchestratorStatus
+```
+
+### Submission tracking
+
+The form writes `submitTransaction(to, value, 0x)`. After confirmation, the page
+polls global `txCount` and treats the latest increased value as the active ID.
+
+This works for the single-owner, single-tab demo. Concurrent submissions from
+another tab can select the wrong latest ID. Decoding `TransactionSubmitted` from
+the confirmed receipt would bind the UI to the exact submission.
+
+### Authoritative reads
+
+`AgentPanel` reads contract state directly:
+
+- `getTransaction(txId)` every three seconds;
+- `getVote(txId, agent)` every second for all agents.
+
+Presentation delays stagger the cards, but results come from the chain.
+
+`TransactionHistory` displays the latest ten intents only when the connected
+address matches the owner. This is a UI choice; contract data remains public.
+
+`AgentReputation` polls approval counters every five seconds and renders relative
+bars.
+
+### Network and status behavior
+
+The configured chain ID is `10143`. On another network, the UI automatically
+requests a switch and can request adding the configured network.
+
+If `NEXT_PUBLIC_BACKEND_URL` is set, the UI polls `GET /status` every 30 seconds.
+Reachability does not prove that the watcher is synchronized, wallets are funded,
+GROQ is available, or votes can be mined.
+
+### Same-block display
+
+`ParallelProof` queries `AgentVoted` logs and compares block numbers. Two current
+edge cases matter:
+
+- JavaScript `every(...)` is true for a one-element list and can also be true for
+  two matching logs; and
+- the copy says “All 3 votes” without verifying exactly three logs exist.
+
+Even with three logs, this proves same-block inclusion—not concurrent EVM
+execution.
+
+## Parallelism: precise claim
+
+| Property | Current status | Evidence |
+| --- | --- | --- |
+| Concurrent analysis | Yes | Three promises run together |
+| Concurrent broadcast | Yes on approval-majority path | Three writes start without awaiting each other |
+| Same-block inclusion | Observable, not guaranteed | Vote receipts can share a block |
+| Conflict-free EVM execution | Not established | Storage access includes shared writes |
+
+Each agent writes an independent vote entry:
+
+```text
+votes[txId][agent1]
+votes[txId][agent2]
+votes[txId][agent3]
+```
+
+But approvals also update shared `transactions[txId].approvalCount` and rejections
+update shared `transactions[txId].rejectionCount`. All votes read shared status.
+The current design therefore cannot accurately claim “zero contention.”
+
+If conflict-free voting is a core requirement, record only per-agent votes during
+`agentVote` and derive or materialize the tally in a separate resolution step.
+That tradeoff needs fresh gas, latency, and UX measurements.
+
+## Deployment and configuration
+
+One deployment consists of one immutable HydraGuard, one owner, three agents, one
+continuously running backend, one frontend deployment, and one or more RPC
+endpoints. Changing owner or agents currently requires redeployment.
+
+### Configuration ownership
+
+| Value | Contract deployment | Backend | Frontend |
+| --- | ---: | ---: | ---: |
+| Owner address | Required | Portfolio input | Read from contract |
+| Contract address | Output | Required | Required |
+| Agent public addresses | Required | Derived from keys | Required |
+| Agent private keys | Never | Required | Never |
+| RPC URL | Deployment input | Optional override | Chain config |
+| GROQ key | Never | Required outside mock mode | Never |
+| WalletConnect ID | Never | Never | Required |
+| Backend URL | Never | Server binding | Optional public URL |
+
+### Backend environment
+
+```dotenv
+AGENT1_KEY=0x...
+AGENT2_KEY=0x...
+AGENT3_KEY=0x...
+CONTRACT_ADDRESS=0x...
+OWNER_ADDRESS=0x...
+GROQ_API_KEY=gsk_...
+USE_MOCK_AGENTS=false
+
+RPC_URL=https://testnet-rpc.monad.xyz
+PORT=3001
+```
+
+### Frontend environment
+
+```dotenv
+NEXT_PUBLIC_WALLETCONNECT_ID=...
+NEXT_PUBLIC_CONTRACT_ADDRESS=0x...
+NEXT_PUBLIC_AGENT1_ADDRESS=0x...
+NEXT_PUBLIC_AGENT2_ADDRESS=0x...
+NEXT_PUBLIC_AGENT3_ADDRESS=0x...
+NEXT_PUBLIC_BACKEND_URL=http://localhost:3001
+```
+
+All `NEXT_PUBLIC_*` values are shipped to browsers and must never contain secrets.
+
+### Deployment invariants
+
+Before starting the backend:
+
+1. `owner()` equals the intended owner.
+2. `getAgents()` returns three distinct expected addresses.
+3. Each backend key derives to the corresponding contract agent.
+4. Frontend addresses use the same agents and ordering.
+5. Every agent has gas for multiple votes.
+6. HydraGuard has enough MON for planned transfers.
+7. Every component uses the same chain and contract.
+
+## Operations and observability
+
+### Available signals
+
+| Signal | Location | Persistence |
+| --- | --- | --- |
+| Analysis and vote logs | Backend stdout | Needs external collection |
+| Process uptime | `/health` and `/status` | Process lifetime |
+| Recent activity | `/status` | Last 100 entries in memory |
+| Canonical votes and status | Contract state and events | On-chain |
+| Vote block numbers | `AgentVoted` logs | On-chain |
+
+The blockchain is canonical. Backend activity is diagnostic until reconciled with
+receipts and state.
+
+### Pending-transaction runbook
+
+1. Check `GET /health` and backend stdout.
+2. Read `getTransaction(txId)` and all three `getVote` results.
+3. Verify agent balances and key/address alignment.
+4. Inspect RPC errors and vote receipts.
+5. Confirm the original submission event was observed.
+6. Do not infer chain state from `/status` alone.
+
+### Recovery characteristics
+
+| Failure | Current recovery |
+| --- | --- |
+| Backend restart | New events are watched; missed events need manual handling |
+| GROQ unavailable | Agents approve through the safe fallback |
+| Vote RPC timeout | Logged; no durable automatic retry |
+| Agent out of gas | Vote does not land; fund and handle manually |
+| Owner key lost | No recovery |
+| Agent key compromised | No rotation; redeploy |
+| Intent abandoned | No cancel or expiry |
+
+## Security and reliability register
+
+Severity is an engineering priority for this prototype, not a formal audit rating.
+
+| Priority | Risk | Current effect | Recommended change |
+| --- | --- | --- | --- |
+| Critical | External-analysis failure is fail-open | GROQ or JSON errors approve | Fail closed, abstain, or require manual override |
+| Critical | Three agent keys share one host | One compromise can control quorum | Separate services/operators and HSM-backed keys |
+| High | Event omits calldata | Selector and calldata analysis see `0x` | Emit or fetch exact calldata |
+| High | No durable event replay | Downtime can leave intents pending | Persist cursor, backfill logs, use idempotent jobs |
+| High | Errors treated as resolution | Transient failure can skip votes | Classify errors and verify state before stopping |
+| High | Off-chain result reported as final | Status can disagree with chain | Derive summaries from landed receipts and reads |
+| High | Known dependency advisories | Vulnerable package paths remain | Upgrade, retest, and audit lockfiles continuously |
+| Medium | Duplicate agents allowed | Quorum can be unreachable | Require pairwise-distinct constructor agents |
+| Medium | No cancellation or expiry | Pending intents live forever | Add deadlines and owner cancellation |
+| Medium | Portfolio uses owner balance | Denominator differs from spending vault | Use vault balance or documented portfolio source |
+| Medium | No simulation | Reverting or malicious calls may be approved | Simulate from HydraGuard and inspect state diff |
+| Medium | Shared vote counters | Zero-contention claim is inaccurate | Separate recording from tally resolution |
+| Medium | Same-block copy overstates evidence | Fewer than three logs can show proof | Require three logs and use precise wording |
+| Medium | Active ID uses global count | Concurrent submissions can select wrong ID | Decode ID from confirmed receipt |
+| Low | Status API allows all origins | Operational metadata is public | Restrict deployed origins |
+| Low | Approval counter called reputation | UI can imply unmeasured quality | Rename or implement outcome-based scoring |
+
+Production controls should also include an external contract audit, secret manager
+or HSM signing, RPC failover, metrics and alerts, rate limiting, policy versioning,
+and a privacy review for public vote reasons.
+
+## Testing strategy
+
+### Existing coverage
+
+`contracts/test/HydraGuard.t.sol` covers successful submission, counter increments,
+access control, double-vote prevention, 2-of-3 execution, two-rejection resolution,
+insufficient approvals, approval counters, agent reads, and native funding.
+
+`contracts/test/Counter.t.sol` is Foundry starter coverage and is unrelated to
+HYDRA.
+
+The latest local review completed with 15 passing Foundry tests and a successful
+Next.js production build.
+
+### Highest-value missing tests
+
+Contract:
+
+- zero targets, invalid IDs, and risk scores above 100;
+- duplicate constructor agents;
+- failed target calls and retry behavior;
+- reentrancy attempts;
+- arbitrary calldata and token calls;
+- all vote-order permutations;
+- invariant: `executed` and `rejected` are never both true; and
+- invariant: tallies equal stored votes.
+
+Backend:
+
+- exact calldata decoding after the event interface is fixed;
+- malformed and adversarial model responses;
+- fail-closed behavior;
+- receipt timeout and retry classification;
+- restart/backfill and duplicate-event idempotency; and
+- partial vote landing with chain reconciliation.
+
+Frontend:
+
+- receipt-based transaction ID selection;
+- missing environment values and wrong-network handling;
+- two-vote rejection rendering;
+- exactly-three-log same-block messaging; and
+- execution revert and retry UX.
+
+### Recommended CI gates
+
+```text
+contracts: forge fmt --check → forge test -vv → invariant/fuzz suite
+backend:   lint → unit tests → integration tests on a local chain
+frontend:  lint/typecheck → component tests → next build
+security:  dependency audit → secret scan → Solidity static analysis
+```
+
+## Recommended evolution path
+
+### Phase 1 — Make the prototype internally correct
+
+1. Expose exact calldata to the orchestrator.
+2. Fail closed on analysis and parsing errors.
+3. Validate three distinct agents.
+4. Reconcile vote outcomes from chain state.
+5. Correct same-block copy and require three logs.
+6. Decode the transaction ID from its receipt.
+7. Update vulnerable dependencies.
+
+### Phase 2 — Make orchestration reliable
+
+1. Persist a block cursor and backfill missed events.
+2. Introduce one idempotent job per `chainId:contract:txId`.
+3. Store analyses, attempts, hashes, and receipts durably.
+4. Add retries, dead-letter handling, and alerts.
+5. Separate agent signers into independent security boundaries.
+
+### Phase 3 — Make analysis evidence-based
+
+1. Simulate every transaction from HydraGuard.
+2. Resolve target bytecode, proxy implementation, verification, and labels.
+3. Decode calldata from verified ABIs where possible.
+4. Integrate live threat intelligence and protocol-specific rules.
+5. Model vault assets and liabilities.
+6. Record policy/model versions and evidence hashes.
+
+### Phase 4 — Harden custody
+
+1. Add deadlines, cancellation, pause, and recovery.
+2. Design secure owner and agent rotation.
+3. Evaluate conflict-free vote storage and explicit resolution.
+4. Add formal invariants, economic analysis, and external audit.
+5. Deploy only after monitored testnet and adversarial exercises.
+
+## Design decisions
+
+### Why votes are on-chain
+
+On-chain votes make identity, ordering, reasons, scores, and quorum independently
+auditable. The tradeoff is gas cost, public metadata, and slower recovery from
+operational errors.
+
+### Why execution remains owner-triggered
+
+Separating approval from execution keeps the final action explicit and lets the
+owner choose timing. The tradeoff is that approval does not guarantee execution,
+and conditions can change between review and execution.
+
+### Why deterministic rules run first
+
+Deterministic checks are fast, repeatable, cheap, and testable. They give demos
+stable behavior when an external model is unavailable. Their limitation is
+coverage: a two-address blacklist and static thresholds are examples, not a
+general security policy.
+
+### Why the frontend reads the contract
+
+Direct reads keep the backend from becoming the source of truth for approval
+status. The tradeoff is RPC polling volume and eventual UI latency.
+
+## Repository reference
+
+```text
+contracts/
+├── src/HydraGuard.sol          Core wallet and voting contract
+├── script/Deploy.s.sol         Environment-driven deployment
+├── test/HydraGuard.t.sol       Product contract tests
+└── foundry.toml                Compiler and Monad RPC configuration
+
+backend/
+├── index.js                    Status server, validation, startup
+├── orchestrator.js             Event processing and vote coordination
+├── agents/                     Security, risk, and portfolio analysis
+├── lib/                        Contract ABI and viem clients
+└── config/monad.js             Chain definition
+
+frontend/
+├── app/                        Next.js entry points
+├── components/                 Wallet, transaction, agent, and status UI
+├── hooks/useHydraContract.ts   Contract reads and writes
+├── hooks/useAgentStatus.ts     Event-based helper
+└── lib/                        ABI, addresses, and wagmi configuration
+```
+
+## Version reference
+
+| Component | Repository version |
+| --- | --- |
+| Solidity | `0.8.24` |
+| Next.js | `14.2.35` |
+| React | `18.x` |
+| wagmi | `^2.12.0` |
+| RainbowKit | `^2.1.6` |
+| viem | `^2.21.0` |
+| GROQ SDK | `^0.7.0` |
+| Tailwind CSS | `^3.4.1` |
+
+Dependency ranges and lockfiles remain the authoritative install record.
 
 ---
 
-## Frontend
-
-**Framework:** Next.js 14 (App Router)
-**Web3:** wagmi v2, viem v2, RainbowKit v2
-**Styling:** Tailwind CSS
-**State:** React hooks (no external state management)
-
-### How the Frontend Reads Agent Votes
-
-The frontend does NOT use WebSocket or event subscriptions directly. Instead:
-
-1. `useGetVote(txId, agentAddress)` — calls `getVote()` view function on contract, polls every 1 second
-2. When a vote is detected (hasVoted = true), it extracts: approve, reason, riskScore
-3. Results are displayed with a staggered reveal animation (first card at 800ms, rest at 500-900ms intervals)
-
-### Parallel Execution Proof (`ParallelProof.tsx`)
-
-After all 3 agents vote, the frontend fetches `AgentVoted` event logs and extracts the block number from each vote transaction receipt. If all 3 share the same block number, a "Parallel Execution Proven" banner is displayed.
-
-**This proves the votes landed in the same block, not that they were executed in parallel.** Same block ≠ parallel execution — Monad's scheduler determines actual parallelism. But same-block inclusion does demonstrate that the independent storage slot design works as intended.
-
-### Key UI States
-
-| State | What's shown |
-|-------|-------------|
-| Not connected | Landing page with project info |
-| Idle | "Submit a transaction to activate the AI guardians" |
-| Wallet | "Confirm in your wallet..." (waiting for MetaMask) |
-| Confirming | "Confirming on Monad..." with progress bar |
-| Analyzing | 3 agent cards cycling through analysis messages |
-| Approved (2/3+) | Green banner + Execute button |
-| Rejected | Red banner: "HYDRA protected your wallet" |
-| Executed | Success banner with tx hash link |
-| Timeout (30s) | Yellow banner: "Agents did not respond in time" |
-
-### Transaction History
-
-- Reads last 10 transactions from contract (only visible to contract owner)
-- Polls every 5 seconds
-- Shows: txId, recipient, amount, approval count, status
-
-### Agent Reputation
-
-- Reads `agentReputation(agentAddress)` for each agent
-- Just a counter of how many times each agent has approved
-- Displayed as progress bars, updated every 5 seconds
-
----
-
-## What HYDRA Does Well
-
-1. **Real on-chain voting** — votes are actual transactions on Monad, not off-chain signatures
-2. **Parallel vote submission** — 3 separate wallets submit simultaneously, leveraging independent storage slots
-3. **Deterministic demo path** — hardcoded scam addresses guarantee rejection for demos
-4. **Real balance check** — Portfolio Agent fetches actual on-chain balance, not a mock
-5. **Auto-resolution** — contract rejects at 2 rejections without waiting for all votes
-6. **Clean separation** — contract knows nothing about AI; backend knows nothing about UI
-
-## What HYDRA Does NOT Do (Honest Limitations)
-
-1. **LLM analysis is prompt-based, not tool-based** — agents don't call external APIs, fetch bytecode, query scam databases, or simulate transactions. They send a text prompt to GROQ and trust the LLM's training data.
-2. **Scam detection is a 2-address blacklist + LLM guessing** — there's no integration with GoPlus, Forta, or any real threat intelligence feed.
-3. **"Portfolio analysis" is native balance only** — no ERC-20 tokens, no DeFi positions, no NFTs. Just `address.balance`.
-4. **Fails open** — if GROQ is down, all agents approve by default. In production this would be dangerous.
-5. **No real MEV protection** — the Risk Agent asks the LLM about MEV, but doesn't actually check mempool or simulate.
-6. **Same-block ≠ proven parallelism** — the ParallelProof banner shows same block number, which is necessary but not sufficient proof of parallel EVM execution.
-7. **No timeout on-chain** — if the backend goes down, pending transactions stay pending forever in the contract.
-8. **Single owner** — only one address can submit and execute. Not a multi-user wallet.
-9. **Reputation has no effect** — `agentReputation` is a counter for display. It doesn't influence voting weight or behavior.
-
----
-
-## Environment Variables
-
-### Backend (`.env`)
-```
-AGENT1_KEY=         # Private key for Security Agent wallet
-AGENT2_KEY=         # Private key for Risk Agent wallet
-AGENT3_KEY=         # Private key for Portfolio Agent wallet
-CONTRACT_ADDRESS=   # Deployed HydraGuard address
-OWNER_ADDRESS=      # Wallet owner address (for portfolio balance check)
-GROQ_API_KEY=       # GROQ API key for Llama 3.3 70B
-USE_MOCK_AGENTS=    # "true" to bypass GROQ (hardcoded responses)
-RPC_URL=            # Monad Testnet RPC (default: https://testnet-rpc.monad.xyz)
-```
-
-### Frontend (`.env.local`)
-```
-NEXT_PUBLIC_WALLETCONNECT_ID=     # WalletConnect project ID
-NEXT_PUBLIC_CONTRACT_ADDRESS=     # Same deployed HydraGuard address
-NEXT_PUBLIC_AGENT1_ADDRESS=       # Security Agent public address
-NEXT_PUBLIC_AGENT2_ADDRESS=       # Risk Agent public address
-NEXT_PUBLIC_AGENT3_ADDRESS=       # Portfolio Agent public address
-```
-
----
-
-## Project Structure
-
-```
-HYDRA/
-├── contracts/
-│   ├── src/HydraGuard.sol              # Multisig contract (2-of-3 voting)
-│   ├── test/HydraGuard.t.sol           # Foundry tests
-│   ├── script/Deploy.s.sol             # Deployment script
-│   └── foundry.toml                    # Solidity 0.8.24
-├── backend/
-│   ├── index.js                        # Entry point (env validation)
-│   ├── orchestrator.js                 # Event watcher + vote coordinator
-│   ├── agents/
-│   │   ├── securityAgent.js            # Blacklist + LLM security check
-│   │   ├── riskAgent.js                # Value/selector checks + LLM risk
-│   │   └── portfolioAgent.js           # On-chain balance + LLM portfolio
-│   ├── lib/
-│   │   ├── viemClient.js               # 1 public + 3 wallet clients
-│   │   └── contractABI.js              # Contract ABI + address
-│   └── config/monad.js                 # Chain definition
-└── frontend/
-    ├── app/
-    │   ├── page.tsx                     # Landing page + dashboard
-    │   ├── layout.tsx                   # Root layout + metadata
-    │   └── providers.tsx               # Wagmi + RainbowKit setup
-    ├── components/
-    │   ├── AgentPanel.tsx              # 3 agent cards + execute flow
-    │   ├── AgentCard.tsx               # Individual agent (5 states)
-    │   ├── TransactionForm.tsx         # Submit tx form + demo buttons
-    │   ├── TransactionHistory.tsx      # Last 10 txs (owner-only)
-    │   ├── AgentReputation.tsx         # Approval count bars
-    │   ├── ParallelProof.tsx           # Same-block proof display
-    │   ├── ConnectWallet.tsx           # RainbowKit wrapper
-    │   └── WrongNetworkBanner.tsx      # Auto-switch to Monad
-    ├── hooks/
-    │   ├── useHydraContract.ts         # Submit/execute/read hooks
-    │   └── useAgentStatus.ts           # Event-based vote watcher
-    └── lib/
-        ├── constants.ts                # Addresses + ABI + agent metadata
-        └── wagmiConfig.ts              # Monad chain config
-```
-
----
-
-## Tech Stack (Actual Versions)
-
-| Component | Technology | Version |
-|-----------|-----------|---------|
-| Smart Contract | Solidity + Foundry | 0.8.24 |
-| Backend Runtime | Node.js (ESM) | 18+ |
-| Blockchain Client | viem | 2.21.0 |
-| AI Inference | GROQ (Llama 3.3 70B Versatile) | groq-sdk 0.7.0 |
-| Frontend Framework | Next.js (App Router) | 14.2.35 |
-| Web3 Hooks | wagmi | 2.12.0 |
-| Wallet UI | RainbowKit | 2.1.6 |
-| Styling | Tailwind CSS | 3.4.1 |
-| Network | Monad Testnet | Chain ID 10143 |
+For setup and the shortest path to a running demo, return to the
+**[project README](README.md#quick-start)**.
