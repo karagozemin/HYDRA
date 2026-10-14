@@ -44,10 +44,11 @@ export function AgentPanel({ txId }: AgentPanelProps) {
   });
 
   const { executeTransaction, isPending: execPending, isConfirming: execConfirming, submitHash: execHash, error: execError, reset: execReset } = useHydraContract();
-  const { owner, isOwner, hasGas, isWrongNetwork, isLoading: isAccessLoading, readError } = useHydraAccess();
+  const { hasGas, isWrongNetwork, isLoading: isAccessLoading, readError } = useHydraAccess();
 
   const isExecuted = txData ? (txData as readonly unknown[])[2] as boolean : false;
   const isRejected = txData ? (txData as readonly unknown[])[3] as boolean : false;
+  const txValue = txData ? (txData as readonly unknown[])[1] as bigint : 0n;
   const txResolved = isExecuted || isRejected;
 
   const security  = useAgentVote(txId, AGENT1_ADDRESS, txResolved);
@@ -100,16 +101,13 @@ export function AgentPanel({ txId }: AgentPanelProps) {
 
   const [execErrorMsg, setExecErrorMsg] = useState('');
 
-  const ownerLabel = owner ? `${owner.slice(0, 6)}...${owner.slice(-4)}` : '';
   const executeAccessIssue = isWrongNetwork
     ? 'Switch to Monad Testnet before executing.'
     : readError
       ? 'Unable to verify the wallet against Monad Testnet. Check the RPC connection.'
-      : isOwner === false
-        ? `Only the owner wallet (${ownerLabel}) can execute.`
-        : hasGas === false
-          ? 'The owner wallet needs MON to pay network gas.'
-          : '';
+      : hasGas === false
+        ? 'The connected wallet needs MON to pay network gas.'
+        : '';
 
   useEffect(() => {
     if (execError) {
@@ -124,7 +122,7 @@ export function AgentPanel({ txId }: AgentPanelProps) {
       setExecErrorMsg(executeAccessIssue);
       return;
     }
-    if (txId !== null) executeTransaction(txId);
+    if (txId !== null) executeTransaction(txId, txValue);
   };
 
   return (
@@ -154,7 +152,7 @@ export function AgentPanel({ txId }: AgentPanelProps) {
           <div className="text-gray-500 text-xs">{approvals} heads approved. Ready to execute.</div>
           <button
             onClick={handleExecute}
-            disabled={execPending || execConfirming || isAccessLoading || Boolean(executeAccessIssue) || isOwner !== true || hasGas !== true}
+            disabled={execPending || execConfirming || isAccessLoading || Boolean(executeAccessIssue) || hasGas !== true}
             className="w-full bg-green-600 hover:bg-green-500 disabled:bg-gray-800 disabled:text-gray-600 text-black font-bold py-3 rounded-lg text-sm transition-all duration-200"
           >
             {execPending
@@ -163,11 +161,9 @@ export function AgentPanel({ txId }: AgentPanelProps) {
                 ? 'Executing...'
                 : isAccessLoading
                   ? 'Checking wallet...'
-                  : isOwner === false
-                    ? 'Owner Wallet Required'
-                    : hasGas === false
-                      ? 'MON Required for Gas'
-                      : 'Execute Transfer'}
+                  : hasGas === false
+                    ? 'MON Required for Gas'
+                    : 'Execute Transfer'}
           </button>
           {executeAccessIssue && (
             <p className="text-yellow-300 text-xs font-mono mt-2">{executeAccessIssue}</p>

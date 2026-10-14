@@ -22,6 +22,9 @@ cache/
 artifacts/
 typechain-types/
 
+# Foundry deployment records
+broadcast/
+
 # Logs
 *.log
 npm-debug.log*

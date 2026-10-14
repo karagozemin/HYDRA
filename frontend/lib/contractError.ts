@@ -18,12 +18,16 @@ export function formatHydraError(error: unknown, action: HydraAction): string {
     return 'Transaction rejected in the wallet.';
   }
 
-  if (message.includes('hydraguard: not owner')) {
-    return 'Only the HydraGuard owner wallet can perform this action.';
-  }
-
   if (message.includes('insufficient funds')) {
     return 'The connected wallet needs MON to pay network gas.';
+  }
+
+  if (message.includes('hydraguard: not submitter')) {
+    return 'Reconnect the wallet that submitted this transaction.';
+  }
+
+  if (message.includes('hydraguard: incorrect value')) {
+    return 'The wallet must provide the exact approved MON amount.';
   }
 
   if (
@@ -51,4 +55,3 @@ export function formatHydraError(error: unknown, action: HydraAction): string {
     ? 'Transaction submission failed. Check the wallet network and try again.'
     : 'Transaction execution failed. Check the wallet network and try again.';
 }
-

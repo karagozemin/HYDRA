@@ -26,24 +26,25 @@ claims the implementation can support, and what must change before production us
 
 ## System at a glance
 
-HYDRA is an owner-controlled smart wallet with an AI-assisted authorization gate.
-The owner proposes and executes transactions. Three configured agent accounts
-review each proposal and cast on-chain votes. The contract requires two approvals
-before execution and permanently rejects a proposal after two rejections.
+HYDRA is a permissionless transaction relay with an AI-assisted authorization
+gate. Any wallet can propose a transaction and, after approval, execute its own
+proposal with its own MON. Three configured agent accounts review each proposal
+and cast on-chain votes. The contract requires two approvals before execution and
+permanently rejects a proposal after two rejections.
 
 | Layer | Responsibility | Authority |
 | --- | --- | --- |
 | `HydraGuard` contract | Store intents and votes, enforce identity and quorum, execute calls | Final on-chain authority |
 | Backend orchestrator | Observe submissions, run analyses, sign and broadcast votes | Controls the three configured agent keys |
-| Next.js frontend | Connect the owner, submit intents, read state, request execution | Convenience client; not trusted for enforcement |
+| Next.js frontend | Connect any wallet, submit intents, read state, request execution | Convenience client; not trusted for enforcement |
 
 ### System boundary
 
 ```mermaid
 flowchart TB
-    subgraph Browser["Owner browser — presentation layer"]
+    subgraph Browser["User browser — presentation layer"]
         UI["Next.js dashboard"]
-        Wallet["Owner wallet"]
+        Wallet["Connected wallet"]
     end
 
     subgraph Service["Backend host — trusted operational boundary"]
@@ -94,7 +95,7 @@ runs off-chain, while identity, quorum, and execution rules live in Solidity.
 
 Assuming correct EVM execution and uncompromised keys, the contract enforces:
 
-- Only the configured owner can submit or execute a transaction.
+- Any address can submit an intent; only its submitter can execute it after quorum.
 - Only a configured agent address can vote.
 - Each configured address can vote once per transaction ID.
 - Risk scores above 100 are rejected.
@@ -111,7 +112,7 @@ Assuming correct EVM execution and uncompromised keys, the contract enforces:
 - The RPC must deliver timely logs, reads, and receipts.
 - The orchestrator must be online when submissions arrive.
 - GROQ output and deterministic rules must reflect the intended policy.
-- The owner must verify the network, target, value, and action before signing.
+- Each submitting or executing user must verify the network, target, value, and action before signing.
 
 All three agent keys currently live in one process. The agents are logically
 specialized, but they are not independent infrastructure trust domains. A backend
@@ -119,7 +120,7 @@ host compromise can compromise the complete voting quorum.
 
 ### Current non-goals
 
-- Multi-user custody or human multisig compatibility
+- Per-user isolated custody or human multisig compatibility
 - Agent rotation, key recovery, or on-chain governance
 - Transaction expiry or cancellation
 - Upgradeability or gas sponsorship
@@ -134,14 +135,14 @@ host compromise can compromise the complete voting quorum.
 ```mermaid
 sequenceDiagram
     autonumber
-    actor Owner
+    actor User
     participant UI as Next.js UI
     participant Guard as HydraGuard
     participant Orch as Orchestrator
     participant Agents as 3 Agents
     participant Groq as GROQ
 
-    Owner->>UI: Enter target and native amount
+    User->>UI: Enter target and native amount
     UI->>Guard: submitTransaction(to, value, data)
     Guard-->>Orch: TransactionSubmitted event
     Note right of Guard: Event omits calldata
@@ -152,7 +153,7 @@ sequenceDiagram
     Orch->>Guard: Submit votes from agent accounts
     Guard-->>UI: State visible through RPC polling
     alt At least 2 approvals
-        Owner->>Guard: executeTransaction(txId)
+        User->>Guard: executeTransaction(txId)
         Guard->>Guard: mark executed and call target
     else At least 2 rejections
         Guard->>Guard: mark rejected
@@ -168,11 +169,11 @@ counts.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Pending: owner submits
+    [*] --> Pending: any wallet submits
     Pending --> Pending: no quorum
     Pending --> Executable: two or more approvals
     Pending --> Rejected: two or more rejections
-    Executable --> Executed: owner executes and target succeeds
+    Executable --> Executed: submitter executes and target succeeds
     Executable --> Executable: target call reverts
     Rejected --> [*]
     Executed --> [*]
@@ -188,7 +189,7 @@ pending forever.
    with `Promise.all`.
 3. Each wallet has an independent account and nonce stream.
 4. After two approvals, `canExecute(txId)` becomes true.
-5. The owner sends a separate execution transaction.
+5. The submitter sends the separate payable execution transaction.
 
 The third agent may still vote after approval quorum because quorum does not mark
 the intent resolved.
@@ -207,7 +208,7 @@ error as resolution. A transient RPC error can stop the loop prematurely.
 
 ### Contract role
 
-`contracts/src/HydraGuard.sol` is both a native-token vault and an intent registry
+`contracts/src/HydraGuard.sol` is a payable execution relay and intent registry
 with a 2-of-3 authorization gate.
 
 After quorum, execution uses:
@@ -225,7 +226,7 @@ general.
 
 | Role | Stored as | Capabilities |
 | --- | --- | --- |
-| Owner | `address public owner` | Submit intents and execute approved intents |
+| User / executor | `msg.sender` and per-intent `submittedBy` | Submit intents and execute their own approved intents |
 | Agent | `address[3] public agents` and `isAgent` | Vote once per intent |
 | Target | Per-transaction `to` | Receive native value and/or calldata |
 
@@ -235,7 +236,6 @@ distinct. Duplicate addresses can make quorum unreachable.
 ### Storage model
 
 ```solidity
-address public owner;
 address[3] public agents;
 uint256 public txCount;
 uint256 public constant THRESHOLD = 2;
@@ -258,7 +258,7 @@ mapping(address => bool) public isAgent;
 | `approvalCount` | Recorded approval total |
 | `rejectionCount` | Recorded rejection total |
 | `submittedAt` | Submission block timestamp |
-| `submittedBy` | Owner that created the intent |
+| `submittedBy` | Wallet that created the intent |
 
 `Vote` stores:
 
@@ -277,9 +277,9 @@ private user context, or sensitive model traces.
 
 | Function | Caller | Effect |
 | --- | --- | --- |
-| `submitTransaction(to, value, data)` | Owner | Creates intent and increments `txCount` |
+| `submitTransaction(to, value, data)` | Anyone | Creates intent and increments `txCount` |
 | `agentVote(txId, approve, reason, riskScore)` | Agent | Stores vote and updates tallies |
-| `executeTransaction(txId)` | Owner | Executes an approved intent |
+| `executeTransaction(txId)` | Submitter | Executes an approved intent with exact `msg.value` |
 | `getTransaction(txId)` | Anyone | Returns target, value, flags, and counts |
 | `getVote(txId, agent)` | Anyone | Returns an agent's vote |
 | `getAgents()` | Anyone | Returns configured agents |
@@ -314,13 +314,15 @@ adds one RPC call per intent.
 
 ### Value custody and execution
 
-Submitting an intent does not deposit MON. HydraGuard must be funded separately
-through its payable `receive()` function. During execution:
+Submitting an intent does not deposit MON. During execution, the original
+submitter must send exactly the approved value as `msg.value`. HydraGuard forwards
+that value to the target in the same transaction:
 
-- value leaves HydraGuard, not the owner's externally owned account;
-- insufficient vault balance makes the call fail;
-- failure rolls back `executed = true`; and
-- the owner can retry after fixing the failure condition.
+- HydraGuard does not hold user value between submission and execution;
+- another wallet cannot execute someone else's intent;
+- an incorrect value reverts before the external call;
+- target failure rolls back `executed = true` and returns the value; and
+- the submitter can retry after fixing the failure condition.
 
 ### Reputation semantics
 
@@ -350,7 +352,6 @@ Required values:
 - `AGENT2_KEY`
 - `AGENT3_KEY`
 - `CONTRACT_ADDRESS`
-- `OWNER_ADDRESS`
 
 `GROQ_API_KEY` is optional only in mock mode.
 
@@ -450,15 +451,15 @@ does not simulate calls, inspect pool liquidity, or observe the mempool.
 
 ### Portfolio Agent
 
-The agent fetches the native balance of `OWNER_ADDRESS` and calculates:
+The agent fetches the native balance of HydraGuard and calculates:
 
 ```text
-positionPct = transactionValue / ownerNativeBalance × 100
+positionPct = transactionValue / hydraGuardNativeBalance × 100
 ```
 
 It rejects values above 50%. This is a real RPC read but not a complete portfolio:
 
-- it measures the configured owner while execution spends HydraGuard's balance;
+- it measures the submitting wallet that must fund execution;
 - it excludes tokens, NFTs, LP positions, lending positions, and debt; and
 - if the balance read fails, analysis continues without reliable balance context.
 
@@ -494,12 +495,10 @@ RootLayout
 
 ### Submission tracking
 
-The form writes `submitTransaction(to, value, 0x)`. After confirmation, the page
-polls global `txCount` and treats the latest increased value as the active ID.
-
-This works for the single-owner, single-tab demo. Concurrent submissions from
-another tab can select the wrong latest ID. Decoding `TransactionSubmitted` from
-the confirmed receipt would bind the UI to the exact submission.
+The form writes `submitTransaction(to, value, 0x)`. After confirmation, it decodes
+`TransactionSubmitted` from that transaction's receipt and passes the exact
+`txId` into the agent panel. Concurrent submissions therefore cannot redirect the
+UI to another user's latest intent.
 
 ### Authoritative reads
 
@@ -510,8 +509,8 @@ the confirmed receipt would bind the UI to the exact submission.
 
 Presentation delays stagger the cards, but results come from the chain.
 
-`TransactionHistory` displays the latest ten intents only when the connected
-address matches the owner. This is a UI choice; contract data remains public.
+`TransactionHistory` displays the latest ten intents for every connected user.
+The same data remains publicly readable from the contract.
 
 `AgentReputation` polls approval counters every five seconds and renders relative
 bars.
@@ -564,15 +563,14 @@ That tradeoff needs fresh gas, latency, and UX measurements.
 
 ## Deployment and configuration
 
-One deployment consists of one immutable HydraGuard, one owner, three agents, one
-continuously running backend, one frontend deployment, and one or more RPC
-endpoints. Changing owner or agents currently requires redeployment.
+One deployment consists of one immutable HydraGuard, three agents, one continuously
+running backend, one frontend deployment, and one or more RPC endpoints. Changing
+agents currently requires redeployment.
 
 ### Configuration ownership
 
 | Value | Contract deployment | Backend | Frontend |
 | --- | ---: | ---: | ---: |
-| Owner address | Required | Portfolio input | Read from contract |
 | Contract address | Output | Required | Required |
 | Agent public addresses | Required | Derived from keys | Required |
 | Agent private keys | Never | Required | Never |
@@ -588,7 +586,6 @@ AGENT1_KEY=0x...
 AGENT2_KEY=0x...
 AGENT3_KEY=0x...
 CONTRACT_ADDRESS=0x...
-OWNER_ADDRESS=0x...
 GROQ_API_KEY=gsk_...
 USE_MOCK_AGENTS=false
 
@@ -615,13 +612,11 @@ All `NEXT_PUBLIC_*` values are shipped to browsers and must never contain secret
 
 Before starting the backend:
 
-1. `owner()` equals the intended owner.
-2. `getAgents()` returns three distinct expected addresses.
-3. Each backend key derives to the corresponding contract agent.
-4. Frontend addresses use the same agents and ordering.
-5. Every agent has gas for multiple votes.
-6. HydraGuard has enough MON for planned transfers.
-7. Every component uses the same chain and contract.
+1. `getAgents()` returns three distinct expected addresses.
+2. Each backend key derives to the corresponding contract agent.
+3. Frontend addresses use the same agents and ordering.
+4. Every agent has gas for multiple votes.
+5. Every component uses the same chain and contract.
 
 ## Operations and observability
 
@@ -655,7 +650,6 @@ receipts and state.
 | GROQ unavailable | Agents approve through the safe fallback |
 | Vote RPC timeout | Logged; no durable automatic retry |
 | Agent out of gas | Vote does not land; fund and handle manually |
-| Owner key lost | No recovery |
 | Agent key compromised | No rotation; redeploy |
 | Intent abandoned | No cancel or expiry |
 
@@ -672,13 +666,12 @@ Severity is an engineering priority for this prototype, not a formal audit ratin
 | High | Errors treated as resolution | Transient failure can skip votes | Classify errors and verify state before stopping |
 | High | Off-chain result reported as final | Status can disagree with chain | Derive summaries from landed receipts and reads |
 | High | Known dependency advisories | Vulnerable package paths remain | Upgrade, retest, and audit lockfiles continuously |
+| High | Permissionless submission spam | Attackers can create intents and drain agent gas | Require a bond, rate limit, or allowlisted relayer |
 | Medium | Duplicate agents allowed | Quorum can be unreachable | Require pairwise-distinct constructor agents |
-| Medium | No cancellation or expiry | Pending intents live forever | Add deadlines and owner cancellation |
-| Medium | Portfolio uses owner balance | Denominator differs from spending vault | Use vault balance or documented portfolio source |
+| Medium | No cancellation or expiry | Pending intents live forever | Add deadlines and governed cancellation |
 | Medium | No simulation | Reverting or malicious calls may be approved | Simulate from HydraGuard and inspect state diff |
 | Medium | Shared vote counters | Zero-contention claim is inaccurate | Separate recording from tally resolution |
 | Medium | Same-block copy overstates evidence | Fewer than three logs can show proof | Require three logs and use precise wording |
-| Medium | Active ID uses global count | Concurrent submissions can select wrong ID | Decode ID from confirmed receipt |
 | Low | Status API allows all origins | Operational metadata is public | Restrict deployed origins |
 | Low | Approval counter called reputation | UI can imply unmeasured quality | Rename or implement outcome-based scoring |
 
@@ -724,7 +717,7 @@ Backend:
 
 Frontend:
 
-- receipt-based transaction ID selection;
+- malformed or missing submission events in confirmed receipts;
 - missing environment values and wrong-network handling;
 - two-vote rejection rendering;
 - exactly-three-log same-block messaging; and
@@ -748,8 +741,7 @@ security:  dependency audit → secret scan → Solidity static analysis
 3. Validate three distinct agents.
 4. Reconcile vote outcomes from chain state.
 5. Correct same-block copy and require three logs.
-6. Decode the transaction ID from its receipt.
-7. Update vulnerable dependencies.
+6. Update vulnerable dependencies.
 
 ### Phase 2 — Make orchestration reliable
 
@@ -765,13 +757,13 @@ security:  dependency audit → secret scan → Solidity static analysis
 2. Resolve target bytecode, proxy implementation, verification, and labels.
 3. Decode calldata from verified ABIs where possible.
 4. Integrate live threat intelligence and protocol-specific rules.
-5. Model vault assets and liabilities.
+5. Model user assets and liabilities.
 6. Record policy/model versions and evidence hashes.
 
 ### Phase 4 — Harden custody
 
 1. Add deadlines, cancellation, pause, and recovery.
-2. Design secure owner and agent rotation.
+2. Design secure agent rotation and emergency governance.
 3. Evaluate conflict-free vote storage and explicit resolution.
 4. Add formal invariants, economic analysis, and external audit.
 5. Deploy only after monitored testnet and adversarial exercises.
@@ -784,11 +776,12 @@ On-chain votes make identity, ordering, reasons, scores, and quorum independentl
 auditable. The tradeoff is gas cost, public metadata, and slower recovery from
 operational errors.
 
-### Why execution remains owner-triggered
+### Why execution is submitter-triggered after quorum
 
-Separating approval from execution keeps the final action explicit and lets the
-owner choose timing. The tradeoff is that approval does not guarantee execution,
-and conditions can change between review and execution.
+Agent quorum is the policy boundary, while `submittedBy` binds payment and final
+execution to the wallet that created the intent. Every user can complete their own
+flow without gaining access to another user's funds. The tradeoff is that approval
+does not guarantee execution and conditions can change before the submitter acts.
 
 ### Why deterministic rules run first
 

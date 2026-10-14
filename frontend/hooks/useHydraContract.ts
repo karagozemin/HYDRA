@@ -1,7 +1,7 @@
 'use client';
 
 import { useWriteContract, useWaitForTransactionReceipt, useReadContract, useAccount, useBalance } from 'wagmi';
-import { isAddressEqual, parseEther } from 'viem';
+import { parseEther } from 'viem';
 import { CONTRACT_ADDRESS, HYDRA_ABI } from '../lib/constants';
 import { monadTestnet } from '../lib/wagmiConfig';
 
@@ -17,16 +17,17 @@ export function useHydraContract() {
     });
   };
 
-  const executeTransaction = (txId: bigint) => {
+  const executeTransaction = (txId: bigint, value: bigint) => {
     writeContract({
       address: CONTRACT_ADDRESS,
       abi: HYDRA_ABI,
       functionName: 'executeTransaction',
       args: [txId],
+      value,
     });
   };
 
-  const { isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
+  const { data: receipt, isLoading: isConfirming, isSuccess } = useWaitForTransactionReceipt({
     hash: submitHash,
   });
 
@@ -36,6 +37,7 @@ export function useHydraContract() {
     isPending,
     isConfirming,
     isSuccess,
+    receipt,
     submitHash,
     error,
     reset,
@@ -44,12 +46,6 @@ export function useHydraContract() {
 
 export function useHydraAccess() {
   const { address, chainId, isConnected } = useAccount();
-  const ownerQuery = useReadContract({
-    address: CONTRACT_ADDRESS,
-    abi: HYDRA_ABI,
-    functionName: 'owner',
-    query: { retry: 2 },
-  });
   const balanceQuery = useBalance({
     address,
     chainId: monadTestnet.id,
@@ -59,19 +55,15 @@ export function useHydraAccess() {
     },
   });
 
-  const owner = ownerQuery.data as `0x${string}` | undefined;
-  const isOwner = address && owner ? isAddressEqual(address, owner) : undefined;
   const hasGas = balanceQuery.data ? balanceQuery.data.value > 0n : undefined;
 
   return {
     address,
-    owner,
     isConnected,
-    isOwner,
     hasGas,
     isWrongNetwork: isConnected && chainId !== monadTestnet.id,
-    isLoading: ownerQuery.isLoading || balanceQuery.isLoading,
-    readError: ownerQuery.error || balanceQuery.error,
+    isLoading: balanceQuery.isLoading,
+    readError: balanceQuery.error,
   };
 }
 

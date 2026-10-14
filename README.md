@@ -38,7 +38,7 @@ This creates a clear division of power:
 - **AI evaluates** the target, transfer risk, and portfolio impact.
 - **Independent agent accounts attest** to their decisions with signed transactions.
 - **Solidity enforces** identity, vote uniqueness, quorum, and execution safety.
-- **The owner retains final control** by explicitly executing an approved intent.
+- **Any connected wallet can submit** while agent quorum remains the execution gate.
 - **The chain preserves the evidence**—decision, reason, score, timestamp, and result.
 
 The result is more than an AI prompt attached to a wallet. HYDRA is a transparent
@@ -50,7 +50,7 @@ and deterministic on-chain rules decide whether execution is possible.
 | Authorization | 2-of-3 agent quorum enforced by `HydraGuard` |
 | Decision engines | Security, Risk, and Portfolio agents |
 | Evidence | Signed votes and human-readable reasons stored on-chain |
-| Execution | Explicitly triggered by the owner after approval |
+| Execution | Triggered by the submitter with the approved MON value |
 | Failure outcome | Two rejections make the intent non-executable |
 | Runtime design | Concurrent analysis with independently submitted votes |
 
@@ -75,20 +75,20 @@ threshold.
 
 ```mermaid
 flowchart LR
-    Owner[Wallet owner] -->|1. submit intent| Guard[HydraGuard]
+    User[Any connected wallet] -->|1. submit intent| Guard[HydraGuard]
     Guard -->|2. event| Orchestrator[Orchestrator]
     Orchestrator -->|3. analyze concurrently| Agents[Security · Risk · Portfolio]
     Agents -->|4. signed votes| Guard
-    Guard -->|5. quorum reached| Owner
-    Owner -->|6. execute| Target[Target address or contract]
+    Guard -->|5. quorum reached| User
+    User -->|6. execute with own MON| Target[Target address or contract]
 ```
 
-1. The owner submits `to`, `value`, and optional calldata to `HydraGuard`.
+1. Any connected wallet submits `to`, `value`, and optional calldata to `HydraGuard`.
 2. The contract stores the intent and emits `TransactionSubmitted`.
 3. The backend runs all three analyses concurrently with `Promise.all`.
 4. Three independently funded agent accounts submit `agentVote(...)` calls.
 5. Two rejections permanently block the intent; two approvals make it executable.
-6. The owner explicitly executes an approved intent.
+6. The submitting wallet supplies the approved MON amount and triggers execution.
 
 HYDRA separates **analysis** from **enforcement**: agents can recommend, but only
 the contract can establish quorum and release funds.
@@ -117,8 +117,10 @@ known implementation gaps, read the **[complete architecture guide](ARCHITECTURE
   recommended correction.
 - Vote transactions may land in the same block, but same-block inclusion does not
   prove parallel EVM execution. Vote tally counters are shared storage writes.
-- The Portfolio Agent compares against `OWNER_ADDRESS` native balance, not the
-  HydraGuard contract balance or a complete token/DeFi portfolio.
+- The Portfolio Agent compares against the submitter's native balance, not a
+  complete token/DeFi portfolio.
+- Permissionless submissions have no bond or rate limit, so a public deployment
+  can be spammed and cause the agent wallets to spend gas.
 - There is no on-chain expiry, cancellation, agent rotation, or upgrade mechanism.
 
 ## Repository map
@@ -161,7 +163,7 @@ hydra/
 - Node.js 18 or newer
 - npm
 - [Foundry](https://book.getfoundry.sh/getting-started/installation)
-- Four testnet accounts: one owner and three agents
+- Four testnet accounts: one deployer and three agents
 - Testnet MON for deployment and agent gas
 - A WalletConnect project ID
 - A GROQ API key, unless mock mode is enabled
@@ -191,7 +193,6 @@ Create `contracts/.env` or export the following values in your shell:
 
 ```dotenv
 DEPLOYER_KEY=<deployer-private-key-as-uint>
-OWNER_ADDRESS=0x...
 AGENT1_ADDRESS=0x...
 AGENT2_ADDRESS=0x...
 AGENT3_ADDRESS=0x...
@@ -208,8 +209,8 @@ forge script script/Deploy.s.sol:Deploy \
 cd ..
 ```
 
-Record the deployed contract address. Fund that address with enough MON to cover
-the transfers used in your demo, and fund each agent account for gas.
+Record the deployed contract address. Fund each agent account for vote gas and
+use a connected test wallet that can cover its transfer amount plus gas.
 
 ### 4. Configure the backend
 
@@ -222,7 +223,6 @@ AGENT1_KEY=0x...
 AGENT2_KEY=0x...
 AGENT3_KEY=0x...
 CONTRACT_ADDRESS=0x...
-OWNER_ADDRESS=0x...
 GROQ_API_KEY=gsk_...
 USE_MOCK_AGENTS=false
 
@@ -268,8 +268,8 @@ cd frontend
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000), connect the owner wallet,
-and switch to the configured Monad testnet.
+Open [http://localhost:3000](http://localhost:3000), connect any wallet with
+testnet MON for gas, and switch to the configured Monad testnet.
 
 For production, set `NEXT_PUBLIC_APP_URL` to the exact deployed origin and add
 that same origin to the WalletConnect/Reown project domain allowlist.
@@ -288,11 +288,11 @@ It does not replay missed events after a restart.
 
 | Scenario | Input | Expected behavior |
 | --- | --- | --- |
-| Small native transfer | Valid address and a small amount | Quorum normally approves; owner can execute |
+| Small native transfer | Valid address and a small amount | Quorum normally approves; the submitter can execute |
 | Known demo scam | `0x000000000000000000000000000000000000dEaD` | All deterministic blacklist checks reject |
 | Large transfer | More than `1000 MON` | Risk Agent rejects |
-| Concentrated transfer | More than 50% of configured owner balance | Portfolio Agent rejects |
-| Insufficient contract funds | Approved amount exceeds HydraGuard balance | Execution reverts; intent remains unexecuted |
+| Concentrated transfer | More than 50% of submitter balance | Portfolio Agent rejects |
+| Insufficient wallet funds | Submitter cannot cover amount plus gas | Wallet rejects execution; intent remains unexecuted |
 
 ## Useful commands
 

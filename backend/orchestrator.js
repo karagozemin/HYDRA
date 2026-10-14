@@ -63,7 +63,7 @@ export function startOrchestrator() {
     pollingInterval: 2000,
     onLogs: async (logs) => {
       for (const log of logs) {
-        const { txId, to, value } = log.args;
+        const { txId, to, value, submittedBy } = log.args;
         const valueMON = (Number(value) / 1e18).toFixed(6);
 
         console.log(`\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━`);
@@ -82,7 +82,7 @@ export function startOrchestrator() {
         const [securityResult, riskResult, portfolioResult] = await Promise.all([
           securityAnalyze({ to, value: value.toString(), data, txId }),
           riskAnalyze({ to, value: value.toString(), data, txId }),
-          portfolioAnalyze({ to, value: value.toString(), txId }),
+          portfolioAnalyze({ to, value: value.toString(), txId, submittedBy }),
         ]);
 
         console.log(`   Analysis complete in ${Date.now() - startTime}ms`);

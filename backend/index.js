@@ -39,7 +39,7 @@ createServer((req, res) => {
 }).listen(PORT, () => console.log(`API listening on port ${PORT}`));
 
 // Validate required env vars
-const required = ['AGENT1_KEY', 'AGENT2_KEY', 'AGENT3_KEY', 'CONTRACT_ADDRESS', 'OWNER_ADDRESS'];
+const required = ['AGENT1_KEY', 'AGENT2_KEY', 'AGENT3_KEY', 'CONTRACT_ADDRESS'];
 const missing = required.filter(k => !process.env[k]);
 if (missing.length > 0) {
   console.error('Missing required environment variables:', missing.join(', '));

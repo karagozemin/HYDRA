@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState } from 'react';
 import { useAccount } from 'wagmi';
 import { ConnectWallet } from '../components/ConnectWallet';
 import { TransactionForm } from '../components/TransactionForm';
@@ -18,28 +18,17 @@ const DarkVeil = dynamic(() => import('../components/DarkVeil'), { ssr: false })
 export default function Home() {
   const { isConnected } = useAccount();
   const [activeTxId, setActiveTxId] = useState<bigint | null>(null);
-  const [phase, setPhase] = useState<'idle' | 'wallet' | 'confirming' | 'analyzing'>('idle');
-  const { data: txCount, refetch: refetchTxCount } = useTxCount();
-  const txCountAtSubmit = useRef<bigint>(BigInt(0));
-
-  // When txCount increases past snapshot → we have the new txId
-  useEffect(() => {
-    if (phase === 'confirming' && txCount !== undefined && txCount > txCountAtSubmit.current) {
-      setActiveTxId(txCount);
-      setPhase('analyzing');
-    }
-  }, [txCount, phase]);
+  const [phase, setPhase] = useState<'idle' | 'wallet' | 'analyzing'>('idle');
+  const { data: txCount } = useTxCount();
 
   const handleSubmitted = () => {
-    txCountAtSubmit.current = txCount ?? 0n;
     setActiveTxId(null);
     setPhase('wallet');
   };
 
-  const handleConfirmed = () => {
-    setPhase('confirming');
-    const interval = setInterval(() => refetchTxCount(), 500);
-    setTimeout(() => clearInterval(interval), 30000);
+  const handleConfirmed = (txId: bigint) => {
+    setActiveTxId(txId);
+    setPhase('analyzing');
   };
 
   const handleError = () => {
@@ -422,15 +411,6 @@ export default function Home() {
               <div className="flex flex-col items-center justify-center py-12 gap-4 text-center">
                 <div className="text-4xl">🦊</div>
                 <p className="text-yellow-400 text-sm font-mono">Confirm in your wallet...</p>
-              </div>
-            )}
-            {phase === 'confirming' && (
-              <div className="flex flex-col items-center justify-center py-12 gap-4 text-center">
-                <div className="text-4xl">⛓️</div>
-                <p className="text-green-400 text-sm font-mono">Confirming on Monad...</p>
-                <div className="w-32 bg-gray-800 rounded-full h-1 mt-2">
-                  <div className="h-1 rounded-full bg-green-500/60 animate-analyzing-bar" />
-                </div>
               </div>
             )}
             {phase === 'analyzing' && activeTxId !== null && (

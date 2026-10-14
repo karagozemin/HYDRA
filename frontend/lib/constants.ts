@@ -33,7 +33,7 @@ export const HYDRA_ABI = [
     "name": "executeTransaction",
     "inputs": [{ "name": "txId", "type": "uint256" }],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "payable"
   },
   {
     "type": "function",
@@ -115,13 +115,6 @@ export const HYDRA_ABI = [
     "type": "event",
     "name": "TransactionRejected",
     "inputs": [{ "name": "txId", "type": "uint256", "indexed": true }]
-  },
-  {
-    "type": "function",
-    "name": "owner",
-    "inputs": [],
-    "outputs": [{ "name": "", "type": "address" }],
-    "stateMutability": "view"
   },
   {
     "type": "function",

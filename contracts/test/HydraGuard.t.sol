@@ -7,7 +7,7 @@ import {HydraGuard} from "../src/HydraGuard.sol";
 contract HydraGuardTest is Test {
     HydraGuard public guard;
 
-    address owner = makeAddr("owner");
+    address user = makeAddr("user");
     address agent1 = makeAddr("agent1"); // Security
     address agent2 = makeAddr("agent2"); // Risk
     address agent3 = makeAddr("agent3"); // Portfolio
@@ -20,25 +20,24 @@ contract HydraGuardTest is Test {
     event TransactionRejected(uint256 indexed txId);
 
     function setUp() public {
-        guard = new HydraGuard(owner, agent1, agent2, agent3);
-        // Fund contract with MON for execute tests
-        vm.deal(address(guard), 10 ether);
-        vm.deal(owner, 10 ether);
+        guard = new HydraGuard(agent1, agent2, agent3);
+        vm.deal(user, 10 ether);
+        vm.deal(attacker, 10 ether);
     }
 
     // ─── Submit Tests ───────────────────────────────────────────────────────
 
     function testSubmitTransaction() public {
-        vm.prank(owner);
+        vm.prank(user);
         vm.expectEmit(true, true, false, true);
-        emit TransactionSubmitted(1, target, 1 ether, owner);
+        emit TransactionSubmitted(1, target, 1 ether, user);
         uint256 txId = guard.submitTransaction(target, 1 ether, "");
         assertEq(txId, 1);
         assertEq(guard.txCount(), 1);
     }
 
     function testSubmitIncrementsCounter() public {
-        vm.startPrank(owner);
+        vm.startPrank(user);
         guard.submitTransaction(target, 0, "");
         guard.submitTransaction(target, 0, "");
         guard.submitTransaction(target, 0, "");
@@ -46,16 +45,18 @@ contract HydraGuardTest is Test {
         assertEq(guard.txCount(), 3);
     }
 
-    function testOnlyOwnerCanSubmit() public {
+    function testAnyoneCanSubmit() public {
         vm.prank(attacker);
-        vm.expectRevert("HydraGuard: not owner");
-        guard.submitTransaction(target, 0, "");
+        vm.expectEmit(true, true, false, true);
+        emit TransactionSubmitted(1, target, 0, attacker);
+        uint256 txId = guard.submitTransaction(target, 0, "");
+        assertEq(txId, 1);
     }
 
     // ─── Vote Tests ─────────────────────────────────────────────────────────
 
     function testAgentVote() public {
-        vm.prank(owner);
+        vm.prank(user);
         uint256 txId = guard.submitTransaction(target, 0, "");
 
         vm.prank(agent1);
@@ -71,7 +72,7 @@ contract HydraGuardTest is Test {
     }
 
     function testOnlyAgentCanVote() public {
-        vm.prank(owner);
+        vm.prank(user);
         uint256 txId = guard.submitTransaction(target, 0, "");
 
         vm.prank(attacker);
@@ -80,7 +81,7 @@ contract HydraGuardTest is Test {
     }
 
     function testDoubleVoteReverts() public {
-        vm.prank(owner);
+        vm.prank(user);
         uint256 txId = guard.submitTransaction(target, 0, "");
 
         vm.startPrank(agent1);
@@ -93,7 +94,7 @@ contract HydraGuardTest is Test {
     // ─── Threshold Tests ────────────────────────────────────────────────────
 
     function testThresholdExecution() public {
-        vm.prank(owner);
+        vm.prank(user);
         uint256 txId = guard.submitTransaction(target, 1 ether, "");
 
         // 2 approve, 1 reject
@@ -107,18 +108,46 @@ contract HydraGuardTest is Test {
         assertTrue(guard.canExecute(txId));
 
         uint256 targetBefore = target.balance;
-        vm.prank(owner);
+        vm.prank(user);
         vm.expectEmit(true, false, false, false);
         emit TransactionExecuted(txId);
-        guard.executeTransaction(txId);
+        guard.executeTransaction{value: 1 ether}(txId);
 
         assertEq(target.balance, targetBefore + 1 ether);
-        (,, bool executed,,, ) = guard.getTransaction(txId);
+        (,, bool executed,,,) = guard.getTransaction(txId);
         assertTrue(executed);
     }
 
+    function testOnlySubmitterCanExecute() public {
+        vm.prank(user);
+        uint256 txId = guard.submitTransaction(target, 1 ether, "");
+
+        vm.prank(agent1);
+        guard.agentVote(txId, true, "approved", 10);
+        vm.prank(agent2);
+        guard.agentVote(txId, true, "approved", 10);
+
+        vm.prank(attacker);
+        vm.expectRevert("HydraGuard: not submitter");
+        guard.executeTransaction{value: 1 ether}(txId);
+    }
+
+    function testExecuteRequiresExactSubmittedValue() public {
+        vm.prank(user);
+        uint256 txId = guard.submitTransaction(target, 1 ether, "");
+
+        vm.prank(agent1);
+        guard.agentVote(txId, true, "approved", 10);
+        vm.prank(agent2);
+        guard.agentVote(txId, true, "approved", 10);
+
+        vm.prank(user);
+        vm.expectRevert("HydraGuard: incorrect value");
+        guard.executeTransaction{value: 0.5 ether}(txId);
+    }
+
     function testParallelVotes() public {
-        vm.prank(owner);
+        vm.prank(user);
         uint256 txId = guard.submitTransaction(target, 0, "");
 
         // All 3 vote (simulating parallel — in Monad these land in the same block)
@@ -129,14 +158,14 @@ contract HydraGuardTest is Test {
         vm.prank(agent3);
         guard.agentVote(txId, true, "Portfolio: within tolerance", 15);
 
-        (,,, , uint256 approvalCount,) = guard.getTransaction(txId);
+        (,,,, uint256 approvalCount,) = guard.getTransaction(txId);
         assertEq(approvalCount, 3);
     }
 
     // ─── Rejection Tests ────────────────────────────────────────────────────
 
     function testRejectionBlock() public {
-        vm.prank(owner);
+        vm.prank(user);
         uint256 txId = guard.submitTransaction(target, 0, "");
 
         // 2 reject → auto-rejected
@@ -148,24 +177,24 @@ contract HydraGuardTest is Test {
         emit TransactionRejected(txId);
         guard.agentVote(txId, false, "No liquidity", 85);
 
-        (,, , bool rejected,,) = guard.getTransaction(txId);
+        (,,, bool rejected,,) = guard.getTransaction(txId);
         assertTrue(rejected);
 
         // Cannot execute
-        vm.prank(owner);
+        vm.prank(attacker);
         vm.expectRevert("HydraGuard: already rejected");
         guard.executeTransaction(txId);
     }
 
     function testCannotExecuteWithoutThreshold() public {
-        vm.prank(owner);
+        vm.prank(user);
         uint256 txId = guard.submitTransaction(target, 0, "");
 
         vm.prank(agent1);
         guard.agentVote(txId, true, "approved", 20);
         // Only 1 approval, need 2
 
-        vm.prank(owner);
+        vm.prank(attacker);
         vm.expectRevert("HydraGuard: insufficient approvals");
         guard.executeTransaction(txId);
     }
@@ -173,7 +202,7 @@ contract HydraGuardTest is Test {
     // ─── Edge Cases ─────────────────────────────────────────────────────────
 
     function testAgentReputation() public {
-        vm.prank(owner);
+        vm.prank(user);
         uint256 txId = guard.submitTransaction(target, 0, "");
 
         vm.prank(agent1);
@@ -190,8 +219,8 @@ contract HydraGuardTest is Test {
         assertEq(agentList[2], agent3);
     }
 
-    function testContractReceivesEther() public {
+    function testDirectFundingReverts() public {
         (bool ok,) = address(guard).call{value: 1 ether}("");
-        assertTrue(ok);
+        assertFalse(ok);
     }
 }

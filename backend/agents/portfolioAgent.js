@@ -14,25 +14,23 @@ const KNOWN_SCAM_ADDRESSES = new Set([
   '0xdeaddeaddeaddeaddeaddeaddeaddeaddeaddead',
 ]);
 
-export async function analyzeTransaction({ to, value, txId }) {
+export async function analyzeTransaction({ to, value, txId, submittedBy }) {
   const toLC = to.toLowerCase();
   if (KNOWN_SCAM_ADDRESSES.has(toLC)) {
     console.log(`[Portfolio] ⚠️  Known scam address: ${to}`);
     return { approve: false, reason: 'Refusing allocation to flagged address. Portfolio protection triggered.', risk_score: 95 };
   }
 
-  const ownerAddress = process.env.OWNER_ADDRESS;
-
   let portfolioContext = 'Balance unavailable';
   let positionPct = 0;
 
   try {
     // Real on-chain data — this is genuine, not mocked
-    const balance = await publicClient.getBalance({ address: ownerAddress });
+    const balance = await publicClient.getBalance({ address: submittedBy });
     const balanceMON = parseFloat(formatEther(balance));
     const valueMON = parseFloat(formatEther(BigInt(value.toString())));
     positionPct = balanceMON > 0 ? (valueMON / balanceMON) * 100 : 100;
-    portfolioContext = `Wallet balance: ${balanceMON.toFixed(4)} MON. This tx: ${valueMON.toFixed(4)} MON (${positionPct.toFixed(1)}% of portfolio)`;
+    portfolioContext = `Submitter balance: ${balanceMON.toFixed(4)} MON. This tx: ${valueMON.toFixed(4)} MON (${positionPct.toFixed(1)}% of wallet)`;
 
     // Fast-path: over 50% of portfolio
     if (positionPct > 50) {

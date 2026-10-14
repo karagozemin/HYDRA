@@ -37,7 +37,6 @@ contract HydraGuard {
     // State
     // ─────────────────────────────────────────────────────────────────────────
 
-    address public owner;
     address[3] public agents;
     uint256 public txCount;
     uint256 public constant THRESHOLD = 2; // 2-of-3 majority
@@ -67,11 +66,6 @@ contract HydraGuard {
     // Modifiers
     // ─────────────────────────────────────────────────────────────────────────
 
-    modifier onlyOwner() {
-        require(msg.sender == owner, "HydraGuard: not owner");
-        _;
-    }
-
     modifier onlyAgent() {
         require(isAgent[msg.sender], "HydraGuard: not agent");
         _;
@@ -92,11 +86,9 @@ contract HydraGuard {
     // Constructor
     // ─────────────────────────────────────────────────────────────────────────
 
-    constructor(address _owner, address _agent1, address _agent2, address _agent3) {
-        require(_owner != address(0), "HydraGuard: zero owner");
+    constructor(address _agent1, address _agent2, address _agent3) {
         require(_agent1 != address(0) && _agent2 != address(0) && _agent3 != address(0), "HydraGuard: zero agent");
 
-        owner = _owner;
         agents[0] = _agent1;
         agents[1] = _agent2;
         agents[2] = _agent3;
@@ -106,25 +98,18 @@ contract HydraGuard {
         isAgent[_agent3] = true;
     }
 
-    /// @dev Contract must be able to receive MON to forward in executeTransaction
-    receive() external payable {}
-
     // ─────────────────────────────────────────────────────────────────────────
     // Core Functions
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * @notice Owner submits a transaction for agent review
+     * @notice Any address can submit a transaction for agent review
      * @param to Target address
      * @param value MON value to send
      * @param data Calldata (0x for simple transfers)
      * @return txId The new transaction ID
      */
-    function submitTransaction(address to, uint256 value, bytes calldata data)
-        external
-        onlyOwner
-        returns (uint256 txId)
-    {
+    function submitTransaction(address to, uint256 value, bytes calldata data) external returns (uint256 txId) {
         require(to != address(0), "HydraGuard: zero target");
 
         txCount++;
@@ -163,13 +148,8 @@ contract HydraGuard {
         require(!votes[txId][msg.sender].hasVoted, "HydraGuard: already voted");
         require(riskScore <= 100, "HydraGuard: invalid risk score");
 
-        votes[txId][msg.sender] = Vote({
-            hasVoted: true,
-            approve: approve,
-            reason: reason,
-            riskScore: riskScore,
-            timestamp: block.timestamp
-        });
+        votes[txId][msg.sender] =
+            Vote({hasVoted: true, approve: approve, reason: reason, riskScore: riskScore, timestamp: block.timestamp});
 
         if (approve) {
             transactions[txId].approvalCount++;
@@ -185,20 +165,17 @@ contract HydraGuard {
 
     /**
      * @notice Execute a transaction that has reached approval threshold
-     * @dev Owner calls this after sufficient agent approvals
+     * @dev The original submitter supplies the approved value at execution time
      */
-    function executeTransaction(uint256 txId)
-        external
-        onlyOwner
-        txExists(txId)
-        notExecuted(txId)
-    {
+    function executeTransaction(uint256 txId) external payable txExists(txId) notExecuted(txId) {
         Transaction storage txn = transactions[txId];
         require(txn.approvalCount >= THRESHOLD, "HydraGuard: insufficient approvals");
+        require(msg.sender == txn.submittedBy, "HydraGuard: not submitter");
+        require(msg.value == txn.value, "HydraGuard: incorrect value");
 
         txn.executed = true;
 
-        (bool success,) = txn.to.call{value: txn.value}(txn.data);
+        (bool success,) = txn.to.call{value: msg.value}(txn.data);
         require(success, "HydraGuard: execution failed");
 
         emit TransactionExecuted(txId);
@@ -211,14 +188,7 @@ contract HydraGuard {
     function getTransaction(uint256 txId)
         external
         view
-        returns (
-            address to,
-            uint256 value,
-            bool executed,
-            bool rejected,
-            uint256 approvalCount,
-            uint256 rejectionCount
-        )
+        returns (address to, uint256 value, bool executed, bool rejected, uint256 approvalCount, uint256 rejectionCount)
     {
         Transaction storage txn = transactions[txId];
         return (txn.to, txn.value, txn.executed, txn.rejected, txn.approvalCount, txn.rejectionCount);

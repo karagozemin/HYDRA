@@ -4,14 +4,12 @@ export const HYDRA_GUARD_ABI = [
   {
     "type": "constructor",
     "inputs": [
-      { "name": "_owner", "type": "address", "internalType": "address" },
       { "name": "_agent1", "type": "address", "internalType": "address" },
       { "name": "_agent2", "type": "address", "internalType": "address" },
       { "name": "_agent3", "type": "address", "internalType": "address" }
     ],
     "stateMutability": "nonpayable"
   },
-  { "type": "receive", "stateMutability": "payable" },
   {
     "type": "function",
     "name": "agentVote",
@@ -40,7 +38,7 @@ export const HYDRA_GUARD_ABI = [
     "name": "executeTransaction",
     "inputs": [{ "name": "txId", "type": "uint256", "internalType": "uint256" }],
     "outputs": [],
-    "stateMutability": "nonpayable"
+    "stateMutability": "payable"
   },
   {
     "type": "function",
