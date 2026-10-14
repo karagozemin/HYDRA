@@ -2,14 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { AgentCard, AgentStatus } from './AgentCard';
-import { useGetVote, useCanExecute, useHydraContract } from '../hooks/useHydraContract';
+import { useGetVote, useHydraContract } from '../hooks/useHydraContract';
 import { useReadContract } from 'wagmi';
 import { AGENT1_ADDRESS, AGENT2_ADDRESS, AGENT3_ADDRESS, CONTRACT_ADDRESS, HYDRA_ABI } from '../lib/constants';
 import { ParallelProof } from './ParallelProof';
 
 interface AgentPanelProps {
   txId: bigint | null;
-  isSubmitting: boolean;
 }
 
 interface AgentResult {
@@ -33,7 +32,7 @@ function useAgentVote(txId: bigint | null, address: `0x${string}`, txResolved: b
   };
 }
 
-export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
+export function AgentPanel({ txId }: AgentPanelProps) {
   const { data: txData } = useReadContract({
     address: CONTRACT_ADDRESS,
     abi: HYDRA_ABI,
@@ -42,10 +41,10 @@ export function AgentPanel({ txId, isSubmitting }: AgentPanelProps) {
     query: { enabled: txId !== null, refetchInterval: 3000 },
   });
 
-  const { executeTransaction, isPending: execPending, isConfirming: execConfirming, isSuccess: execSuccess, submitHash: execHash, error: execError, reset: execReset } = useHydraContract();
+  const { executeTransaction, isPending: execPending, isConfirming: execConfirming, submitHash: execHash, error: execError, reset: execReset } = useHydraContract();
 
-  const isExecuted = txData ? (txData as any)[2] : false;
-  const isRejected = txData ? (txData as any)[3] : false;
+  const isExecuted = txData ? (txData as readonly unknown[])[2] as boolean : false;
+  const isRejected = txData ? (txData as readonly unknown[])[3] as boolean : false;
   const txResolved = isExecuted || isRejected;
 
   const security  = useAgentVote(txId, AGENT1_ADDRESS, txResolved);

@@ -17,7 +17,7 @@ export function WrongNetworkBanner() {
     if (!connector) return;
     setIsPending(true);
     try {
-      const provider = await connector.getProvider() as any;
+      const provider = await connector.getProvider() as { request: (args: { method: string; params: unknown[] }) => Promise<unknown> };
       if (!provider?.request) return;
 
       try {
@@ -25,8 +25,9 @@ export function WrongNetworkBanner() {
           method: 'wallet_switchEthereumChain',
           params: [{ chainId: CHAIN_HEX }],
         });
-      } catch (err: any) {
-        if (err?.code === 4902 || err?.code === -32603) {
+      } catch (err: unknown) {
+        const code = (err as { code?: number })?.code;
+        if (code === 4902 || code === -32603) {
           await provider.request({
             method: 'wallet_addEthereumChain',
             params: [{
@@ -49,6 +50,7 @@ export function WrongNetworkBanner() {
     if (isWrongNetwork && !isPending) {
       doSwitch();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isWrongNetwork]);
 
   if (!isWrongNetwork) return null;
